@@ -9,8 +9,8 @@ from torch.nn import Linear, Parameter
 
 # Global Attention Mechanism
 class feature_attention(nn.Module):
-    def _init_(self, input_dim, output_dim, kernel_size=5, rate=4):
-        super(feature_attention, self)._init_()
+    def __init__(self, input_dim, output_dim, kernel_size=5, rate=4):
+        super(feature_attention, self).__init__()
         self.nconv = nn.Conv2d(input_dim, output_dim, kernel_size=(1, 1))
         self.channel_attention = nn.Sequential(  
             nn.Linear(output_dim, int(output_dim / rate)),  
@@ -38,14 +38,14 @@ class feature_attention(nn.Module):
         return out.permute(0, 3, 2, 1)
 
 class AVWGCN(nn.Module): #hid=64 + 64, 2 * 64, 2, 8
-    def _init_(self, in_dim, out_dim, cheb_k, embed_dim):
+    def __init__(self, in_dim, out_dim, cheb_k, embed_dim):
         """
         :param in_dim: 输入维度
         :param out_dim: 输出维度
         :param cheb_k: 切比雪夫多项式的阶，默认为3
         :param embed_dim: 节点的嵌入维度
         """
-        super(AVWGCN, self)._init_()
+        super(AVWGCN, self).__init__()
         self.cheb_k = cheb_k                                            #embed_dim, cheb_k, in_dim, out_dim
         self.weights_pool = nn.Parameter(torch.FloatTensor(embed_dim, cheb_k, in_dim, out_dim))#8,2,128,128
         self.bias_pool = nn.Parameter(torch.FloatTensor( embed_dim, out_dim))
@@ -113,8 +113,8 @@ class AVWGCN(nn.Module): #hid=64 + 64, 2 * 64, 2, 8
         return x_gconv
 
 class AGCRNCell(nn.Module):
-    def _init_(self, num_node, in_dim, out_dim, cheb_k, embed_dim):
-        super(AGCRNCell, self)._init_()
+    def __init__(self, num_node, in_dim, out_dim, cheb_k, embed_dim):
+        super(AGCRNCell, self).__init__()
         self.num_node = num_node
         self.hidden_dim = out_dim
         self.gate = AVWGCN(in_dim + out_dim, 2 * out_dim, cheb_k, embed_dim)
@@ -137,8 +137,8 @@ class AGCRNCell(nn.Module):
     
 
 class AVWDCRNN(nn.Module):  #AVWDCRNN(num_node, hidden_dim, hidden_dim, cheb_k, embed_dim, num_layers)
-    def _init_(self, num_node, in_dim, out_dim, cheb_k, embed_dim, num_layers=1):
-        super(AVWDCRNN, self)._init_()
+    def __init__(self, num_node, in_dim, out_dim, cheb_k, embed_dim, num_layers=1):
+        super(AVWDCRNN, self).__init__()
         assert num_layers >= 1, "At least one DCRNN layer in the Encoder."
         self.num_node = num_node
         self.input_dim = in_dim
@@ -188,8 +188,8 @@ class AVWDCRNN(nn.Module):  #AVWDCRNN(num_node, hidden_dim, hidden_dim, cheb_k, 
         return torch.stack(init_states, dim=0) 
     
 class PositionalEncoding(nn.Module):
-    def _init_(self, out_dim, max_len=12):
-        super(PositionalEncoding, self)._init_()
+    def __init__(self, out_dim, max_len=12):
+        super(PositionalEncoding, self).__init__()
 
         # compute the positional encodings once in log space.
         pe = torch.zeros(max_len, out_dim)
@@ -207,8 +207,8 @@ class PositionalEncoding(nn.Module):
         return x
 
 class MultiHeadAttention(nn.Module):
-    def _init_(self, embed_size, heads):
-        super(MultiHeadAttention, self)._init_()
+    def __init__(self, embed_size, heads):
+        super(MultiHeadAttention, self).__init__()
         # 计算在时间维度上的多头注意力机制
         self.positional_encoding = PositionalEncoding(embed_size)
         self.embed_size = embed_size
@@ -255,8 +255,8 @@ class MultiHeadAttention(nn.Module):
         return out
 
 class GraphAttentionLayer(nn.Module):
-    def _init_(self, in_features, out_features, adj, dropout, alpha, concat=True):
-        super(GraphAttentionLayer, self)._init_()
+    def __init__(self, in_features, out_features, adj, dropout, alpha, concat=True):
+        super(GraphAttentionLayer, self).__init__()
         self.dropout = dropout
         self.adj = adj
         self.in_features = in_features
@@ -291,8 +291,8 @@ class GraphAttentionLayer(nn.Module):
 
 
 class GPR_prop(MessagePassing):
-    def _init_(self, K, alpha, Init, Gamma=None, **kwargs):
-        super(GPR_prop, self)._init_(aggr='add', **kwargs)
+    def __init__(self, K, alpha, Init, Gamma=None, **kwargs):
+        super(GPR_prop, self).__init__(aggr='add', **kwargs)
         self.K = K
         self.alpha = alpha
         self.Init = Init
@@ -354,8 +354,8 @@ class GPR_prop(MessagePassing):
 
 
 class GPRGNN(torch.nn.Module):
-    def _init_(self,input_dim,output_dim, hidden,cheb_k,num_layers):
-        super(GPRGNN, self)._init_()
+    def __init__(self,input_dim,output_dim, hidden,cheb_k,num_layers):
+        super(GPRGNN, self).__init__()
         self.lin1 = Linear(input_dim, hidden)
         self.lin2 = Linear(hidden, output_dim)
 
@@ -399,8 +399,8 @@ class GPRGNN(torch.nn.Module):
 
 
 class Model(nn.Module):
-    def _init_(self, num_node, input_dim, hidden_dim, output_dim, embed_dim, cheb_k, horizon, num_layers, heads, timesteps, A, kernel_size):
-        super(Model, self)._init_()
+    def __init__(self, num_node, input_dim, hidden_dim, output_dim, embed_dim, cheb_k, horizon, num_layers, heads, timesteps, A, kernel_size):
+        super(Model, self).__init__()
         self.A = A
         self.timesteps = timesteps
         self.num_node = num_node
