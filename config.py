@@ -8,13 +8,13 @@ DATASET = 'PEMS04'
 #DEVICE = 'cuda:1'
 DEVICE = 'cpu'
 MODEL = 'AFDGCN'
-GRAPH = "./data/PEMS04/conn_graph.csv"
+GRAPH = "/content/AFDGCN_BerNet/data/PEMS04/conn_graph.csv"
 K = 0.1
 # FILENAME_ID = "./data/PEMS03/PEMS03.txt"
 FILENAME_ID = None
 
 # 1. get configuration
-config_file = './conf/{}_{}.conf'.format(DATASET, MODEL)
+config_file = '/content/AFDGCN_BerNet/conf/{}_{}.conf'.format(DATASET, MODEL)
 config = configparser.ConfigParser()
 config.read(config_file)
 
