@@ -264,7 +264,7 @@ elif args.mode == 'test':
 
     model.load_state_dict(torch.load(checkpoint))  # map_location='cuda:5'
     adj_tensor = torch.tensor(Adj, dtype=torch.float32)
-    adj_tensor = adj_tensor.to(torch.device('cuda'))
+    adj_tensor = adj_tensor.to(torch.device('cpu'))
     adj = F.softmax(F.relu(torch.mm(adj_tensor, adj_tensor.t())), dim=1)
     print(adj.shape)
     np.save('adaptive_matrix.npy', adj.detach().cpu().numpy())
