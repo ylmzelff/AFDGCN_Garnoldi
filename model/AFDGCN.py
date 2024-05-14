@@ -7,17 +7,11 @@ from torch_geometric.nn import MessagePassing
 from torch_geometric.nn import GCNConv, APPNP
 from torch.nn import Linear, Parameter
 from torch_geometric.nn.conv.gcn_conv import gcn_norm
+from torch_geometric.utils import add_self_loops, get_laplacian
+from torch_geometric.nn import JumpingKnowledge
 import pandas as pd
-from typing import Optional
-
-import torch.nn.functional as F
-from torch import Tensor
-
-from torch_geometric.nn.conv import MessagePassing
-from torch_geometric.nn.conv.gcn_conv import gcn_norm
-from torch_geometric.typing import Adj, OptPairTensor, OptTensor, SparseTensor
-from torch_geometric.utils import is_torch_sparse_tensor, spmm, to_edge_index
-from torch_geometric.utils.sparse import set_sparse_value
+#from arnoldi import *
+from torch_geometric.nn.conv.arnoldi import *
 
 
 # Global Attention Mechanism
@@ -429,87 +423,9 @@ class GPRGNN(torch.nn.Module):
         # Stack the initialized states along the first dimension to get (num_layers, B, N, hidden_dim)
         return torch.stack(init_states, dim=0)
 
-
-##############################################################
-"""
-class APPNP(MessagePassing):
-    _cached_edge_index: Optional[OptPairTensor]
-    _cached_adj_t: Optional[SparseTensor]
-
-    def __init__(self, K, alpha, dropout=0.,
-                 cached=False, add_self_loops=True,
-                 normalize=True, **kwargs):
-        kwargs.setdefault('aggr', 'add')
-        super().__init__(**kwargs)
-        self.K = K
-        self.alpha = alpha
-        self.dropout = dropout
-        self.cached = cached
-        self.add_self_loops = add_self_loops
-        self.normalize = normalize
-
-        self._cached_edge_index = None
-        self._cached_adj_t = None
-
-        def reset_parameters(self):
-            super().reset_parameters()
-            self._cached_edge_index = None
-            self._cached_adj_t = None
-
-        def forward(self, x, edge_index, edge_weight=None, ):
-
-            if self.normalize:
-                if isinstance(edge_index, Tensor):
-                    cache = self._cached_edge_index
-                    if cache is None:
-                        edge_index = gcn_norm(edge_index, num_nodes=x.size(1), improved=False,
-                        add_self_loops=True, dtype=x.dtype)
-                        if self.cached:
-                            self._cached_edge_index = edge_index
-                    else:
-                        edge_index = cache[0]
-
-                elif isinstance(edge_index, SparseTensor):
-                    cache = self._cached_adj_t
-                    if cache is None:
-                        edge_index = gcn_norm(edge_index, num_nodes=x.size(1), improved=False,
-                        add_self_loops=True, dtype=x.dtype)
-                        if self.cached:
-                            self._cached_adj_t = edge_index
-                    else:
-                        edge_index = cache
-
-            h = x
-            for k in range(self.K):
-                if self.dropout > 0 and self.training:
-                    if isinstance(edge_index, Tensor):
-                        if is_torch_sparse_tensor(edge_index):
-                            edge_index, _ = to_edge_index(edge_index)
-                        else:
-                            pass  # Do nothing with edge_weight if not needed
-                    else:
-                      value = edge_index.storage.value()
-                      assert value is not None
-                      value = F.dropout(value, p=self.dropout)
-                      edge_index = edge_index.set_value(value, layout='coo')
-                        #pass  # Do nothing with edge_weight if not needed
-
-                # propagate_type: (x: Tensor)
-                x = self.propagate(edge_index, x=x)
-                x = x * (1 - self.alpha)
-                x = x + self.alpha * h
-
-            return x
-
-        def message(self, x_j: Tensor) -> Tensor:
-            return x_j
-
-        def message_and_aggregate(self, adj_t: Adj, x: Tensor) -> Tensor:
-            return spmm(adj_t, x, reduce=self.aggr)
-
-        def __repr__(self) -> str:
-            return f'{self.__class__.__name__}(K={self.K}, alpha={self.alpha})'
-"""
+##############################################################################
+#                            APPNP                                                                      #
+##############################################################################
 
 class APPNP_Net(torch.nn.Module):
     def __init__(self, num_node, input_dim, output_dim, hidden, cheb_k, num_layers, embed_dim):
@@ -542,7 +458,7 @@ class APPNP_Net(torch.nn.Module):
         #print("x= ", x.size())
         #print("edge_index= ", edge_index.size())
         x = self.lin2(x)
-        #x = self.prop1(x, edge_index)
+        x = self.prop1(x, edge_index)
         #x = x.transpose(0, 1)
         #print(x.size())
         #print(x.shape)
@@ -569,9 +485,299 @@ class APPNP_Net(torch.nn.Module):
 
         # Stack the initialized states along the first dimension to get (num_layers, B, N, hidden_dim)
         return torch.stack(init_states, dim=0)
+# =====================================================
+#   Generalized Arnoldi
+# =====================================================
 
 
-####################################################################
+class GArnoldi_prop(MessagePassing):
+    '''
+    propagation class for GPR_GNN
+    '''
+
+    def __init__(self, K, alpha, Init, nameFunc, homophily, Vandermonde, lower, upper, Gamma=None, bias=True, **kwargs):
+        super(GArnoldi_prop, self).__init__(aggr='add', **kwargs)
+        self.K = K
+        self.Init = Init
+        self.alpha = alpha
+        self.homophily = homophily
+        self.Vandermonde = Vandermonde
+        self.nameFunc = nameFunc
+        self.lower = lower
+        self.upper = upper
+        # self.division =
+        assert Init in ['Monomial', 'Chebyshev', 'Legendre', 'Jacobi', 'PPR', 'SChebyshev']
+        if Init == 'Monomial':
+            # SGC-like, note that in this case, alpha has to be a integer. It means where the peak at when initializing GPR weights.
+            # x = m_polynomial_zeros(-(self.alpha), (self.alpha), self.K)
+            if (nameFunc == 'g_0'):
+                self.coeffs = compare_fit_panelA(g_0, Init, Vandermonde, self.K, self.lower,
+                                                 self.upper)  # m_polynomial_zeros(-(self.alpha), (self.alpha), self.K)
+            elif (nameFunc == 'g_1'):
+                self.coeffs = compare_fit_panelA(g_1, Init, Vandermonde, self.K, self.lower, self.upper)
+            elif (nameFunc == 'g_2'):
+                self.coeffs = compare_fit_panelA(g_2, Init, Vandermonde, self.K, self.lower, self.upper)
+            elif (nameFunc == 'g_3'):
+                self.coeffs = compare_fit_panelA(g_3, Init, Vandermonde, self.K, self.lower, self.upper)
+            elif (nameFunc == 'g_4'):
+                self.coeffs = compare_fit_panelA(g_4, Init, Vandermonde, self.K, self.lower,
+                                                 self.upper)  # t_polynomial_zeros(-(self.alpha), (self.alpha), self.K)#
+            elif (nameFunc == 'g_band_rejection'):
+                self.coeffs = compare_fit_panelA(g_band_rejection, Init, Vandermonde, self.K, self.lower, self.upper)
+            elif (nameFunc == 'g_band_pass'):
+                self.coeffs = compare_fit_panelA(g_band_pass, Init, Vandermonde, self.K, self.lower, self.upper)
+            elif (nameFunc == 'g_low_pass'):
+                self.coeffs = compare_fit_panelA(g_low_pass, Init, Vandermonde, self.K, self.lower, self.upper)
+            elif (nameFunc == 'g_high_pass'):
+                self.coeffs = compare_fit_panelA(g_high_pass, Init, Vandermonde, self.K, self.lower, self.upper)
+            elif (nameFunc == 'g_comb'):
+                self.coeffs = compare_fit_panelA(g_comb, Init, Vandermonde, self.K, self.lower, self.upper)
+            else:
+                self.coeffs = compare_fit_panelA(g_fullRWR, Init, Vandermonde, self.K, self.lower, self.upper)
+            l = [i for i in range(1, len(self.coeffs) + 1)]
+            self.coeffs = filter_jackson(self.coeffs)
+            TEMP = self.coeffs
+
+            # TEMP = p_polynomial_zeros(self.K)
+            # TEMP = j_polynomial_zeros(self.K,0,1)
+        elif Init == 'Chebyshev':
+            # PPR-like
+            if (nameFunc == 'g_0'):
+                self.coeffs = compare_fit_panelA(g_0, Init, Vandermonde, self.K, self.lower, self.upper)
+            elif (nameFunc == 'g_1'):
+                self.coeffs = compare_fit_panelA(g_1, Init, Vandermonde, self.K, self.lower, self.upper)
+            elif (nameFunc == 'g_2'):
+                self.coeffs = compare_fit_panelA(g_2, Init, Vandermonde, self.K, self.lower, self.upper)
+            elif (nameFunc == 'g_3'):
+                self.coeffs = compare_fit_panelA(g_3, Init, Vandermonde, self.K, self.lower,
+                                                 self.upper)  # t_polynomial_zeros(-(self.alpha), (self.alpha), self.K)#
+            elif (nameFunc == 'g_4'):
+                self.coeffs = compare_fit_panelA(g_4, Init, Vandermonde, self.K, self.lower,
+                                                 self.upper)  # t_polynomial_zeros(-(self.alpha), (self.alpha), self.K)#
+            elif (nameFunc == 'g_band_rejection'):
+                self.coeffs = compare_fit_panelA(g_band_rejection, Init, Vandermonde, self.K, self.lower,
+                                                 self.upper)  # t_polynomial_zeros(-(self.alpha), (self.alpha), self.K)#
+            elif (nameFunc == 'g_band_pass'):
+                self.coeffs = compare_fit_panelA(g_band_pass, Init, Vandermonde, self.K, self.lower, self.upper)
+            elif (nameFunc == 'g_low_pass'):
+                self.coeffs = compare_fit_panelA(g_low_pass, Init, Vandermonde, self.K, self.lower, self.upper)
+            elif (nameFunc == 'g_high_pass'):
+                self.coeffs = compare_fit_panelA(g_high_pass, Init, Vandermonde, self.K, self.lower, self.upper)
+            elif (nameFunc == 'g_comb'):
+                self.coeffs = compare_fit_panelA(g_comb, Init, Vandermonde, self.K, self.lower, self.upper)
+            else:
+                self.coeffs = compare_fit_panelA(g_fullRWR, Init, Vandermonde, self.K)
+            l = [i for i in range(1, len(self.coeffs) + 1)]
+            # self.coeffs = np.divide(self.coeffs, l)
+            self.coeffs = filter_jackson(self.coeffs)
+            # self.coeffs = np.divide(self.coeffs, self.division)
+
+            TEMP = self.coeffs
+            # TEMP = t_polynomial_zeros(-(self.alpha), (self.alpha), self.K)
+        elif Init == 'Legendre':
+            # TEMP = p_polynomial_zeros(self.K)
+            if (nameFunc == 'g_0'):
+                self.coeffs = compare_fit_panelA(g_0, Init, Vandermonde, self.K, self.lower,
+                                                 self.upper)  # p_polynomial_zeros(self.K)
+            elif (nameFunc == 'g_1'):
+                self.coeffs = compare_fit_panelA(g_1, Init, Vandermonde, self.K, self.lower,
+                                                 self.upper)  # p_polynomial_zeros(self.K)
+            elif (nameFunc == 'g_2'):
+                self.coeffs = compare_fit_panelA(g_2, Init, Vandermonde, self.K, self.lower, self.upper)
+            elif (nameFunc == 'g_3'):
+                self.coeffs = compare_fit_panelA(g_3, Init, Vandermonde, self.K, self.lower,
+                                                 self.upper)  # p_polynomial_zeros(self.K)
+            elif (nameFunc == 'g_4'):
+                self.coeffs = compare_fit_panelA(g_4, Init, Vandermonde, self.K, self.lower,
+                                                 self.upper)  # t_polynomial_zeros(-(self.alpha), (self.alpha), self.K)#
+            elif (nameFunc == 'g_band_rejection'):
+                self.coeffs = compare_fit_panelA(g_band_rejection, Init, Vandermonde, self.K, self.lower,
+                                                 self.upper)  # t_polynomial_zeros(-(self.alpha), (self.alpha), self.K)#
+            elif (nameFunc == 'g_band_pass'):
+                self.coeffs = compare_fit_panelA(g_band_pass, Init, Vandermonde, self.K, self.lower, self.upper)
+            elif (nameFunc == 'g_low_pass'):
+                self.coeffs = compare_fit_panelA(g_low_pass, Init, Vandermonde, self.K, self.lower, self.upper)
+            elif (nameFunc == 'g_high_pass'):
+                self.coeffs = compare_fit_panelA(g_high_pass, Init, Vandermonde, self.K, self.lower, self.upper)
+            elif (nameFunc == 'g_comb'):
+                self.coeffs = compare_fit_panelA(g_comb, Init, Vandermonde, self.K, self.lower, self.upper)
+            else:
+                self.coeffs = compare_fit_panelA(g_fullRWR, Init, self.K, self.lower, self.upper)
+            l = [i for i in range(1, len(self.coeffs) + 1)]
+            self.coeffs = filter_jackson(self.coeffs)
+            # self.coeffs = np.divide(self.coeffs, l)
+            # self.coeffs = np.divide(self.coeffs, self.division)
+
+            TEMP = self.coeffs
+        elif Init == 'Jacobi':
+            if (nameFunc == 'g_0'):
+                self.coeffs = compare_fit_panelA(g_0, Init, Vandermonde, self.K, self.lower,
+                                                 self.upper)  # p_polynomial_zeros(self.K)
+            elif (nameFunc == 'g_1'):
+                self.coeffs = compare_fit_panelA(g_1, Init, Vandermonde, self.K, self.lower,
+                                                 self.upper)  # p_polynomial_zeros(self.K)
+            elif (nameFunc == 'g_2'):
+                self.coeffs = compare_fit_panelA(g_2, Init, Vandermonde, self.K, self.lower, self.upper)
+            elif (nameFunc == 'g_3'):
+                self.coeffs = compare_fit_panelA(g_3, Init, Vandermonde, self.K, self.lower,
+                                                 self.upper)  # p_polynomial_zeros(self.K)
+            elif (nameFunc == 'g_4'):
+                self.coeffs = compare_fit_panelA(g_4, Init, Vandermonde, self.K, self.lower,
+                                                 self.upper)  # t_polynomial_zeros(-(self.alpha), (self.alpha), self.K)#
+            elif (nameFunc == 'g_band_rejection'):
+                self.coeffs = compare_fit_panelA(g_band_rejection, Init, Vandermonde, self.K, self.lower,
+                                                 self.upper)  # t_polynomial_zeros(-(self.alpha), (self.alpha), self.K)#
+            elif (nameFunc == 'g_band_pass'):
+                self.coeffs = compare_fit_panelA(g_band_pass, Init, Vandermonde, self.K, self.lower, self.upper)
+            elif (nameFunc == 'g_low_pass'):
+                self.coeffs = compare_fit_panelA(g_low_pass, Init, Vandermonde, self.K, self.lower, self.upper)
+            elif (nameFunc == 'g_high_pass'):
+                self.coeffs = compare_fit_panelA(g_high_pass, Init, Vandermonde, self.K, self.lower, self.upper)
+            elif (nameFunc == 'g_comb'):
+                self.coeffs = compare_fit_panelA(g_comb, Init, Vandermonde, self.K, self.lower, self.upper)
+            else:
+                self.coeffs = compare_fit_panelA(g_fullRWR, Init, self.K)
+            l = [i for i in range(1, len(self.coeffs) + 1)]
+            # self.coeffs = np.divide(self.coeffs, l)
+
+            # self.coeffs = np.divide(self.coeffs, self.division)
+            TEMP = self.coeffs
+            # TEMP = j_polynomial_zeros(self.K,0,1)
+        elif Init == 'SChebyshev':
+            # TEMP = s_polynomial_zeros(self.K)
+            if (nameFunc == 'g_0'):
+                self.coeffs = compare_fit_panelA(g_0, Init, self.K)
+            elif (nameFunc == 'g_1'):
+                self.coeffs = compare_fit_panelA(g_1, Init, self.K)
+            elif (nameFunc == 'g_2'):
+                self.coeffs = compare_fit_panelA(g_2, Init, self.K)
+            elif (nameFunc == 'g_3'):
+                self.coeffs = compare_fit_panelA(g_3, Init, self.K)
+            else:
+                self.coeffs = compare_fit_panelA(g_fullRWR, Init, self.K)
+            TEMP = self.coeffs
+        elif Init == 'PPR':
+            TEMP = alpha * (1 - alpha) ** np.arange(K + 1)
+            TEMP[-1] = (1 - alpha) ** K
+        elif Init == 'WS':
+            # Specify Gamma
+            TEMP = Gamma
+
+        self.temp = Parameter(torch.tensor(TEMP))
+
+    def reset_parameters(self):
+        torch.nn.init.zeros_(self.temp)
+        if (self.Init == 'Monomial'):
+            self.temp.data = m_polynomial_zeros(self.lower, self.upper,
+                                                self.K)  # m_polynomial_zeros(-(self.alpha), (self.alpha), self.K)
+        elif (self.Init == 'Chebyshev'):
+            self.temp.data = t_polynomial_zeros(self.lower, self.upper,
+                                                self.K)  # t_polynomial_zeros(-(self.alpha), (self.alpha), self.K)
+        elif (self.Init == 'Legendre'):
+            self.temp.data = p_polynomial_zeros(self.K)
+        elif (self.Init == 'Jacobi'):
+            self.temp.data = j_polynomial_zeros(self.K, 0, 1)
+        else:
+            for k in range(self.K + 1):
+                self.temp.data[k] = self.alpha * (1 - self.alpha) ** k
+            self.temp.data[-1] = (1 - self.alpha) ** self.K
+
+    def forward(self, x, edge_index):
+        print('SIZE OF X: ', x.size())
+        print ('NODE DIM = ', self.node_dim)
+        edge_index, norm = gcn_norm(edge_index, num_nodes=x.size(1), dtype=x.dtype)
+        edge_index1, norm1 = get_laplacian(edge_index, normalization='sym',
+                                           num_nodes=x.size(self.node_dim))
+        # edge_index_tilde, norm_tilde= add_self_loops(edge_index1,norm1,fill_value=-1.0,num_nodes=x.size(self.node_dim))
+        # 2I-L
+        edge_index2, norm2 = add_self_loops(edge_index1, -norm1, fill_value=2., num_nodes=x.size(self.node_dim))
+        hidden = self.temp[self.K - 1] * x
+        # hidden = x*(self.temp[0])
+        for k in range(self.K - 2, -1, -1):
+            if (self.homophily):
+                x = self.propagate(edge_index, x=x, norm=norm)
+            else:
+                x = self.propagate(edge_index1, x=x, norm=norm1)
+            gamma = self.temp[k]
+
+            x = x + gamma * hidden
+        return x
+
+    def message(self, x_j, norm):
+        return norm.view(-1, 1) * x_j
+
+    def __repr__(self):
+        return '{}(K={}, temp={})'.format(self.__class__.__name__, self.K,
+                                          self.temp)
+
+
+class GARNOLDI(torch.nn.Module):
+    def __init__(self, num_node, input_dim, output_dim, hidden, cheb_k, num_layers, embed_dim):
+        super(GARNOLDI, self).__init__()
+        self.lin1 = Linear(1216, 1)
+        self.lin2 = Linear(1, 1216)
+
+        self.prop1 = GArnoldi_prop(cheb_k, 0.1, 'Monomial', 'g_band_rejection', False,
+                                       False, 0.000001, 2.0, None)
+
+        self.Init = 'Monomial'
+        self.dprate = 0.5
+        self.dropout = 0.2
+        self.FuncName = 'g_band_rejection'
+        self.num_layers = num_layers
+###
+        self.dcrnnn_cells = nn.ModuleList()
+        self.dcrnnn_cells.append(AGCRNCell(num_node, input_dim, output_dim, cheb_k, embed_dim))
+        for _ in range(1, num_layers):
+            self.dcrnnn_cells.append(AGCRNCell(num_node, input_dim, output_dim, cheb_k, embed_dim))
+
+    def reset_parameters(self):
+        self.prop1.reset_parameters()
+
+    def forward(self, x):
+        edge_index = read_edge_list_csv()
+
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        x = x.to('cpu')
+        x_reshaped = x.reshape(x.size(0), -1)
+        x = F.relu(self.lin1(x_reshaped))
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        x = self.lin2(x)
+
+        if self.dprate == 0.0:
+            x = self.prop1(x, edge_index)
+            return F.log_softmax(x, dim=1)
+        else:
+            x = F.dropout(x, p=self.dprate, training=self.training)
+            x = self.prop1(x, edge_index)
+            #x = x.transpose(0, 1)
+
+            # Reshape it from (5, 1216) to (5, 1, 19, 64)
+            x = x.reshape(x.size(0), 1, 19, 64)  # Manually reshape to (5, 1, 19, 64)
+
+            # Apply log softmax along the appropriate dimension
+            x = F.log_softmax(x, dim=3)
+
+            return x
+
+    def init_hidden(self, batch_size):
+        """
+        Initialize hidden states for all layers.
+
+        Args:
+        - batch_size (int): The batch size for the input data.
+
+        Returns:
+        - init_states (Tensor): Initialized hidden states for all layers.
+        """
+        init_states = []  # Initialize hidden states list for all layers
+        for i in range(self.num_layers):
+            # Assuming each cell in dcrnnn_cells has an init_hidden_state method
+            init_states.append(self.dcrnnn_cells[i].init_hidden_state(batch_size))
+
+        # Stack the initialized states along the first dimension to get (num_layers, B, N, hidden_dim)
+        return torch.stack(init_states, dim=0)
+
 def read_edge_list_csv():
     # Read the CSV file into a DataFrame
     df = pd.read_csv('/content/AFDGCN_BerNet/data/PEMS04/conn_graph.csv')
@@ -604,8 +810,8 @@ class Model(nn.Module):
         # encoder
         self.feature_attention = feature_attention(input_dim=input_dim, output_dim=hidden_dim, kernel_size=kernel_size)
         # self.encoder = AVWDCRNN(num_node, hidden_dim, hidden_dim, cheb_k, embed_dim, num_layers)
-        self.encoder = APPNP_Net(num_node, input_dim, output_dim, hidden_dim, cheb_k, num_layers, embed_dim)
-        # self.encoder = GPRGNN(num_node,input_dim,output_dim, hidden_dim, cheb_k,num_layers,embed_dim)
+        #self.encoder = GPRGNN(num_node, input_dim, output_dim, hidden_dim, cheb_k, num_layers, embed_dim)
+        self.encoder = GARNOLDI(num_node, input_dim, output_dim, hidden_dim, cheb_k, num_layers, embed_dim)
         self.GraphAttentionLayer = GraphAttentionLayer(hidden_dim, hidden_dim, A, dropout=0.5, alpha=0.2, concat=True)
         self.MultiHeadAttention = MultiHeadAttention(embed_size=hidden_dim, heads=heads)
         # predict
