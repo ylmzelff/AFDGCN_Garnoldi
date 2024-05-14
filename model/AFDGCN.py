@@ -683,8 +683,9 @@ class GArnoldi_prop(MessagePassing):
             self.temp.data[-1] = (1 - self.alpha) ** self.K
 
     def forward(self, x, edge_index):
-        print('SIZE OF X: ', x.size())
-        print ('NODE DIM = ', self.node_dim)
+        #print('SIZE OF X: ', x.size())
+        #print ('NODE DIM = ', self.node_dim)
+        #print(edge_index)
         edge_index, norm = gcn_norm(edge_index, num_nodes=x.size(1), dtype=x.dtype)
         edge_index1, norm1 = get_laplacian(edge_index, normalization='sym',
                                            num_nodes=x.size(self.node_dim))
@@ -788,7 +789,9 @@ def read_edge_list_csv():
 
     # Create the edge index tensor
     edge_index = torch.tensor([edges_from, edges_to], dtype=torch.long)
-
+   
+    # Creating the edge index tensor with numerical indices
+    #edge_index = np.array(edges_from.values, edges_to.values).T
     return edge_index
 
 
@@ -809,8 +812,9 @@ class Model(nn.Module):
         self.node_embedding = nn.Parameter(torch.randn(self.num_node, embed_dim), requires_grad=True)
         # encoder
         self.feature_attention = feature_attention(input_dim=input_dim, output_dim=hidden_dim, kernel_size=kernel_size)
-        # self.encoder = AVWDCRNN(num_node, hidden_dim, hidden_dim, cheb_k, embed_dim, num_layers)
+        #self.encoder = AVWDCRNN(num_node, hidden_dim, hidden_dim, cheb_k, embed_dim, num_layers)
         #self.encoder = GPRGNN(num_node, input_dim, output_dim, hidden_dim, cheb_k, num_layers, embed_dim)
+        #self.encoder = APPNP_Net(num_node, input_dim, output_dim, hidden_dim, cheb_k, num_layers, embed_dim)
         self.encoder = GARNOLDI(num_node, input_dim, output_dim, hidden_dim, cheb_k, num_layers, embed_dim)
         self.GraphAttentionLayer = GraphAttentionLayer(hidden_dim, hidden_dim, A, dropout=0.5, alpha=0.2, concat=True)
         self.MultiHeadAttention = MultiHeadAttention(embed_size=hidden_dim, heads=heads)
@@ -825,7 +829,7 @@ class Model(nn.Module):
         edge_index = torch.tensor([[i, i + 1] for i in range(data.shape[2] - 1)])
         x = self.feature_attention(x)
         init_state = self.encoder.init_hidden(batch_size)
-        # output, _ = self.encoder(x, init_state, self.node_embedding)  # (B, T, N, hidden_dim)
+        #output, _ = self.encoder(x, init_state, self.node_embedding)  # (B, T, N, hidden_dim)
         # output, _ = self.encoder(data) #self.A,init_state
         output = self.encoder(x)  # self.A,init_state
         state = output[:, -1:, :, :]
