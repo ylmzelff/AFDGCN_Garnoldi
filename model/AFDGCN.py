@@ -683,17 +683,20 @@ class GArnoldi_prop(MessagePassing):
             self.temp.data[-1] = (1 - self.alpha) ** self.K
 
     def forward(self, x, edge_index):
+       
+        edge_index, norm = gcn_norm(edge_index, num_nodes=x.size(0))
         #print('SIZE OF X: ', x.size())
-        #print ('NODE DIM = ', self.node_dim)
-        #print(edge_index)
-        edge_index, norm = gcn_norm(edge_index, num_nodes=x.size(1), dtype=x.dtype)
+        #print ('EDGE INDEX = ', edge_index.size())
+        #print(norm.size())
         edge_index1, norm1 = get_laplacian(edge_index, normalization='sym',
                                            num_nodes=x.size(self.node_dim))
+        
         # edge_index_tilde, norm_tilde= add_self_loops(edge_index1,norm1,fill_value=-1.0,num_nodes=x.size(self.node_dim))
         # 2I-L
         edge_index2, norm2 = add_self_loops(edge_index1, -norm1, fill_value=2., num_nodes=x.size(self.node_dim))
         hidden = self.temp[self.K - 1] * x
         # hidden = x*(self.temp[0])
+        #x= x.T
         for k in range(self.K - 2, -1, -1):
             if (self.homophily):
                 x = self.propagate(edge_index, x=x, norm=norm)
@@ -718,7 +721,7 @@ class GARNOLDI(torch.nn.Module):
         self.lin1 = Linear(1216, 1)
         self.lin2 = Linear(1, 1216)
 
-        self.prop1 = GArnoldi_prop(cheb_k, 0.1, 'Monomial', 'g_band_rejection', False,
+        self.prop1 = GArnoldi_prop(cheb_k, 0.1, 'Monomial', 'g_band_rejection', True,
                                        False, 0.000001, 2.0, None)
 
         self.Init = 'Monomial'
@@ -830,7 +833,7 @@ class Model(nn.Module):
         x = self.feature_attention(x)
         init_state = self.encoder.init_hidden(batch_size)
         #output, _ = self.encoder(x, init_state, self.node_embedding)  # (B, T, N, hidden_dim)
-        # output, _ = self.encoder(data) #self.A,init_state
+        #output, _ = self.encoder(data) #self.A,init_state
         output = self.encoder(x)  # self.A,init_state
         state = output[:, -1:, :, :]
         state = self.nconv(state)
