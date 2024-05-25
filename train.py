@@ -6,6 +6,7 @@ from config import args
 from datetime import datetime
 import torch.nn.functional as F
 from model.AFDGCN import Model as Network
+from model.AFDGCN import GARNOLDI
 from engine import Engine
 from lib.metrics import MAE_torch
 from lib.TrainInits import init_seed
@@ -249,8 +250,40 @@ trainer = Engine(model,
                  scaler,
                  args,
                  lr_scheduler)
+
+functionnames = ['g_band_rejection', 'g_band_pass', 'g_low_pass', 'g_high_pass']
+# functionnames = ['g_0', 'g_1', 'g_2', 'g_3']
+polynames = ['Monomial', 'Chebyshev', 'Legendre', 'Jacobi']
+# polynames = ['Chebyshev']
+# functionnames = ['g_low_pass']
+
+methodnames = ['GARNOLDI']
+# methodnames = ['GCN', 'GAT', 'APPNP','ChebNet', 'JKNet','GPRGNN','BernNet']
+LR = [0.002]
+MYdropout = [0.5]
 if args.mode == 'train':
-    trainer.train()
+
+    # sys.stdout = open('PubmedHyperOPTComplexes-L.txt', 'w')
+    print("HYPER PARAMETER TUNING")
+    for l in range(len(LR)):
+        print("---------------------------------------------- LR = ", LR[l])
+
+        for d in range(len(MYdropout)):
+            print("===================================== DROPOUT = ", MYdropout[d])
+            for i in range(len(functionnames)):
+                for j in range(len(polynames)):
+                    for t in range(len(methodnames)):
+                        args.net = methodnames[t]
+                        args.FuncName = functionnames[i]
+                        args.ArnoldiInit = polynames[j]
+                        gnn_name = args.net
+                        funcName = args.FuncName
+                        PolyName = args.ArnoldiInit
+                        args.lr = LR[l]
+                        args.dropout = MYdropout[d]
+
+                        Net = GARNOLDI
+                        trainer.train()
 elif args.mode == 'test':
     checkpoint = "./experiments/PEMS04/20240119141320/PEMS04_AFDGCN_best_model.pth"  # en yeni modeli kullan
     model.load_state_dict(torch.load(checkpoint, map_location=torch.device('cpu')))
