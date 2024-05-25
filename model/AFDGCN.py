@@ -1,5 +1,6 @@
 import torch
 import math
+from config import args
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
@@ -1506,14 +1507,13 @@ class GARNOLDI(torch.nn.Module):
         super(GARNOLDI, self).__init__()
         self.lin1 = Linear(1216, 1)
         self.lin2 = Linear(1, 1216)
-
-        self.prop1 = GArnoldi_prop(cheb_k, 0.1, 'Monomial', 'g_band_rejection', False,
+        self.prop1 = GArnoldi_prop(cheb_k, 0.1, args.ArnoldiInit, args.FuncName, False,
                                        False, 0.000001, 2.0, None)
 
-        self.Init = 'Monomial'
-        self.dprate = 0.5
-        self.dropout = 0.2
-        self.FuncName = 'g_band_rejection'
+        self.ArnoldiInit = args.ArnoldiInit
+        self.dprate = args.dprate
+        self.dropout = args.dropout
+        self.FuncName = args.FuncName
         self.num_layers = num_layers
 ###
         self.dcrnnn_cells = nn.ModuleList()
