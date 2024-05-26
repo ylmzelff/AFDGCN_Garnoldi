@@ -282,7 +282,8 @@ if args.mode == 'train':
                         args.lr = LR[l]
                         args.dropout = MYdropout[d]
 
-                        Net = GARNOLDI
+                        Net = GARNOLDI(num_nodes, input_dim, output_dim, hidden_dim, cheb_k, num_layers, embed_dim)
+
                         trainer.train()
 elif args.mode == 'test':
     checkpoint = "./experiments/PEMS04/20240119141320/PEMS04_AFDGCN_best_model.pth"  # en yeni modeli kullan
