@@ -1511,8 +1511,8 @@ class GARNOLDI(torch.nn.Module):
                                        False, 0.000001, 2.0, None)
 
         self.ArnoldiInit = args.ArnoldiInit
-        self.dprate = args.dprate
-        self.dropout = args.dropout
+        self.dprate = 0.5
+        self.dropout = 0.2
         self.FuncName = args.FuncName
         self.num_layers = num_layers
 ###
