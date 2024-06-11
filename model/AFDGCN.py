@@ -1543,7 +1543,7 @@ class GARNOLDI(torch.nn.Module):
             x = x.transpose(0, 1)
 
             # Reshape it from (5, 1216) to (5, 1, 19, 64)
-            x = x.reshape(x.size(0), 12, 19, 64)  # Manually reshape to (5, 1, 19, 64)
+            x = x.reshape(x.size(0), 12, 307, 64)  # Manually reshape to (5, 1, 19, 64)
 
             # Apply log softmax along the appropriate dimension
             x = F.log_softmax(x, dim=3)
