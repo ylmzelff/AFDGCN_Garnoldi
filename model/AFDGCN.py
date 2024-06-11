@@ -1571,7 +1571,7 @@ class GARNOLDI(torch.nn.Module):
 ####################################################################
 def read_edge_list_csv():
     # Read the CSV file into a DataFrame
-    df = pd.read_csv('/content/AFDGCN_BerNet/data/PEMS04/conn_graph.csv')
+    df = pd.read_csv('/content/AFDGCN_BerNet/data/PEMS04/PEMS04.csv')
 
     # Extract the 'from' and 'to' columns as numpy arrays
     edges_from = df['from'].to_numpy()
