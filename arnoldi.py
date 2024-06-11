@@ -248,7 +248,7 @@ def p_polynomial_zeros(nt):
 
     t, w = imtqlx(nt, a, b, c)
 
-    return t + 1  # for [0, 2] interval
+    return 0.9*t #t + 1  # for [0, 2] interval
 
 
 def j_polynomial_zeros(nt, alpha, beta):
@@ -299,7 +299,7 @@ def j_polynomial_zeros(nt, alpha, beta):
 
     t, w = imtqlx(nt, x, bj, c)
 
-    return t + 1  # for [0, 2] interval
+    return 0.9*t #t + 1  # for [0, 2] interval
 
 
 def g_fullRWR(x):
