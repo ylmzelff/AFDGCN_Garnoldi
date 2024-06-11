@@ -251,8 +251,8 @@ trainer = Engine(model,
                  args,
                  lr_scheduler)
 
-functionnames = ['g_band_rejection', 'g_band_pass', 'g_low_pass', 'g_high_pass']
-# functionnames = ['g_0', 'g_1', 'g_2', 'g_3']
+#functionnames = ['g_band_rejection', 'g_band_pass', 'g_low_pass', 'g_high_pass']
+functionnames = ['g_0', 'g_1', 'g_2', 'g_3']
 polynames = ['Monomial', 'Chebyshev', 'Legendre', 'Jacobi']
 # polynames = ['Chebyshev']
 # functionnames = ['g_low_pass']
@@ -282,12 +282,13 @@ if args.mode == 'train':
                         args.lr = LR[l]
                         args.dropout = MYdropout[d]
 
-                        Net = GARNOLDI(num_nodes, input_dim, output_dim, hidden_dim, cheb_k, num_layers, embed_dim)
+                        Net = GARNOLDI(args.num_nodes, input_dim, output_dim, hidden_dim, cheb_k, num_layers, embed_dim)
 
-                        trainer.train()
+                        trainer.train(Net,args.net,args.FuncName,args.ArnoldiInit)
 elif args.mode == 'test':
     checkpoint = "./experiments/PEMS04/20240119141320/PEMS04_AFDGCN_best_model.pth"  # en yeni modeli kullan
     model.load_state_dict(torch.load(checkpoint, map_location=torch.device('cpu')))
+    Net = GARNOLDI(args.num_nodes, input_dim, output_dim, hidden_dim, cheb_k, num_layers, embed_dim)
 
     # model.load_state_dict(torch.load(checkpoint))  # map_location='cuda:5'
     # node_embedding = model.node_embedding
@@ -303,6 +304,6 @@ elif args.mode == 'test':
     print(adj.shape)
     np.save('adaptive_matrix.npy', adj.detach().cpu().numpy())
     print("load saved model...")
-    trainer.test(model, trainer.args, test_loader, scaler, trainer.logger)
+    trainer.test(model, trainer.args, test_loader, scaler, trainer.logger, Net)
 else:
     raise ValueError
