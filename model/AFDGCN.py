@@ -272,7 +272,7 @@ def p_polynomial_zeros(nt):
 
     t, w = imtqlx(nt, a, b, c)
 
-    return t + 1  # for [0, 2] interval
+    return 0.9* #t + 1  # for [0, 2] interval
 
 
 def j_polynomial_zeros(nt, alpha, beta):
@@ -323,7 +323,7 @@ def j_polynomial_zeros(nt, alpha, beta):
 
     t, w = imtqlx(nt, x, bj, c)
 
-    return t + 1  # for [0, 2] interval
+    return 0.9* #t + 1  # for [0, 2] interval
 
 
 def g_fullRWR(x):
@@ -1505,10 +1505,10 @@ class GArnoldi_prop(MessagePassing):
 class GARNOLDI(torch.nn.Module):
     def __init__(self, num_node, input_dim, output_dim, hidden, cheb_k, num_layers, embed_dim):
         super(GARNOLDI, self).__init__()
-        self.lin1 = Linear(1216, 1)
-        self.lin2 = Linear(1, 1216)
+        self.lin1 = Linear(235776, 64)
+        self.lin2 = Linear(64, 235776)
         self.prop1 = GArnoldi_prop(cheb_k, 0.1, args.ArnoldiInit, args.FuncName, False,
-                                       False, 0.000001, 2.0, None)
+                                       False, -0.9, 0.9, None)
 
         self.ArnoldiInit = args.ArnoldiInit
         self.dprate = 0.5
@@ -1543,7 +1543,7 @@ class GARNOLDI(torch.nn.Module):
             x = x.transpose(0, 1)
 
             # Reshape it from (5, 1216) to (5, 1, 19, 64)
-            x = x.reshape(x.size(0), 1, 19, 64)  # Manually reshape to (5, 1, 19, 64)
+            x = x.reshape(x.size(0), 12, 19, 64)  # Manually reshape to (5, 1, 19, 64)
 
             # Apply log softmax along the appropriate dimension
             x = F.log_softmax(x, dim=3)
@@ -1610,21 +1610,22 @@ class Model(nn.Module):
         self.nconv = nn.Conv2d(1, self.horizon, kernel_size=(1, 1), bias=True)
         self.end_conv = nn.Conv2d(hidden_dim, 1, kernel_size=(1, 1), bias=True)
 
-    def forward(self, x):
+    def forward(self, x,Net):
         # x: (B, T, N, D)
-        data = x
-        batch_size = x.shape[0]  # 5
-        edge_index = torch.tensor([[i, i + 1] for i in range(data.shape[2] - 1)])
+        self.encoder=Net
+        data=x
+        batch_size = x.shape[0] #5
+        edge_index = torch.tensor([[i, i+1] for i in range(data.shape[2] - 1)])
         x = self.feature_attention(x)
         init_state = self.encoder.init_hidden(batch_size)
-        # output, _ = self.encoder(x, init_state, self.node_embedding)  # (B, T, N, hidden_dim)
-        # output, _ = self.encoder(data) #self.A,init_state
-        output = self.encoder(x)  # self.A,init_state
+        #output, _ = self.encoder(x, init_state, self.node_embedding)  # (B, T, N, hidden_dim)
+        #output, _ = self.encoder(data) #self.A,init_state
+        output= self.encoder(x) #self.A,init_state
         state = output[:, -1:, :, :]
         state = self.nconv(state)
         SAtt = self.GraphAttentionLayer(state)
         TAtt = self.MultiHeadAttention(output).permute(0, 2, 1, 3)
         out = SAtt + TAtt
         out = self.end_conv(out.permute(0, 3, 2, 1))  # [B, 1, N, T] -> [B, N, T]
-        out = out.permute(0, 3, 2, 1)  # [B, T, N]
+        out = out.permute(0, 3, 2, 1)   # [B, T, N]
         return out
