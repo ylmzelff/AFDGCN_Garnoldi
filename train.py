@@ -164,7 +164,7 @@ print("train loader ", len(train_loader))
 input_dim = 1
 hidden_dim = 64
 output_dim = 1
-embed_dim = 19  # 8
+embed_dim = 8  # 8
 cheb_k = 2
 horizon = 12
 num_layers = 1
