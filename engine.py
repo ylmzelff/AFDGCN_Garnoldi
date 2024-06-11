@@ -149,10 +149,10 @@ class Engine(object):
         for epoch in tqdm(range(1, self.args.epochs + 1)):
             self.current_epoch = epoch
             t1 = time.time()
-            train_graph_name = f'{method}{FuncName}{ArnoldiInit}/Loss/Train'
-            mae_train_graph_name = f'{method}{FuncName}{ArnoldiInit}/Metrics/MAE_Train'
-            rmse_train_graph_name = f'{method}{FuncName}{ArnoldiInit}/Metrics/RMSE_Train'
-            mape_train_graph_name = f'{method}{FuncName}{ArnoldiInit}/Metrics/MAPE_Train'
+            train_graph_name = f'{method}_{FuncName}_{ArnoldiInit}/Loss/Train'
+            mae_train_graph_name = f'{method}_{FuncName}_{ArnoldiInit}/Metrics/MAE_Train'
+            rmse_train_graph_name = f'{method}_{FuncName}_{ArnoldiInit}/Metrics/RMSE_Train'
+            mape_train_graph_name = f'{method}_{FuncName}_{ArnoldiInit}/Metrics/MAPE_Train'
             
             # Add the scalars to TensorBoard
             
