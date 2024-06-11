@@ -20,7 +20,7 @@ from torch_geometric.typing import Adj, OptPairTensor, OptTensor, SparseTensor
 from torch_geometric.utils import is_torch_sparse_tensor, spmm, to_edge_index
 from torch_geometric.utils.sparse import set_sparse_value
 import sys
-sys.path.append('/content/AFDGCN_BerNet/')  # Append the parent directory
+sys.path.append('/content/AFDGCN_Garnoldi/')  # Append the parent directory
 #from arnoldi import *
 # -*- coding: utf-8 -*-
 """
@@ -1571,7 +1571,7 @@ class GARNOLDI(torch.nn.Module):
 ####################################################################
 def read_edge_list_csv():
     # Read the CSV file into a DataFrame
-    df = pd.read_csv('/content/AFDGCN_BerNet/data/PEMS04/PEMS04.csv')
+    df = pd.read_csv('/content/AFDGCN_Garnoldi/data/PEMS04/PEMS04.csv')
 
     # Extract the 'from' and 'to' columns as numpy arrays
     edges_from = df['from'].to_numpy()
