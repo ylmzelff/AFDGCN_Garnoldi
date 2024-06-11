@@ -4,7 +4,7 @@ import numpy as np
 def load_st_dataset(dataset):
     # output B, N, D
     if dataset == 'PEMS04':
-        data_path = os.path.join('/content/AFDGCN_BerNet/data/PEMS04/morning_only.npz')
+        data_path = os.path.join('/content/AFDGCN_BerNet/data/PEMS04/PEMS04.npz')
         data = np.load(data_path)['data'][:, :, :1]  # only the first dimension, traffic flow data
     elif dataset == 'PEMS08':
         data_path = os.path.join('./data/PEMS08/PEMS08.npz')
