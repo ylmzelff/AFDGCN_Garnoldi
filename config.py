@@ -5,8 +5,8 @@ import configparser
 Mode = 'train'
 DEBUG = 'True'
 DATASET = 'PEMS04'
-#DEVICE = 'cuda:1'
-DEVICE = 'cpu'
+DEVICE = 'cuda:0'
+#DEVICE = 'cpu'
 MODEL = 'AFDGCN'
 GRAPH = "/content/AFDGCN_Garnoldi/data/PEMS04/PEMS04.csv"
 K = 0.1
