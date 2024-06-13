@@ -1505,10 +1505,10 @@ class GArnoldi_prop(MessagePassing):
 class GARNOLDI(torch.nn.Module):
     def __init__(self, num_node, input_dim, output_dim, hidden, cheb_k, num_layers, embed_dim):
         super(GARNOLDI, self).__init__()
-        self.lin1 = Linear(235776, 64)
-        self.lin2 = Linear(64, 235776)
+        self.lin1 = Linear(235776, 64).to(torch.device('cuda:0))
+        self.lin2 = Linear(64, 235776).to(torch.device('cuda:0))
         self.prop1 = GArnoldi_prop(cheb_k, 0.1, args.ArnoldiInit, args.FuncName, False,
-                                       False, -0.9, 0.9, None)
+                                       False, -0.9, 0.9, None).to(torch.device('cuda:0))
 
         self.ArnoldiInit = args.ArnoldiInit
         self.dprate = 0.5
@@ -1527,23 +1527,23 @@ class GARNOLDI(torch.nn.Module):
     def forward(self, x):
         edge_index = read_edge_list_csv()
 
-        x = F.dropout(x, p=self.dropout, training=self.training)
-        x = x.to('cpu')
-        x_reshaped = x.reshape(x.size(0), -1)
+        x = F.dropout(x, p=self.dropout, training=self.training).to(torch.device('cuda:0))
+        #x = x.to('cpu')
+        x_reshaped = x.reshape(x.size(0), -1).to(torch.device('cuda:0))
         x = F.relu(self.lin1(x_reshaped))
-        x = F.dropout(x, p=self.dropout, training=self.training)
+        x = F.dropout(x, p=self.dropout, training=self.training).to(torch.device('cuda:0))
         x = self.lin2(x)
 
         if self.dprate == 0.0:
             x = self.prop1(x, edge_index)
             return F.log_softmax(x, dim=1)
         else:
-            x = F.dropout(x, p=self.dprate, training=self.training)
+            x = F.dropout(x, p=self.dprate, training=self.training).to(torch.device('cuda:0))
             x = self.prop1(x, edge_index)
             x = x.transpose(0, 1)
 
             # Reshape it from (5, 1216) to (5, 1, 19, 64)
-            x = x.reshape(x.size(0), 12, 307, 64)  # Manually reshape to (5, 1, 19, 64)
+            x = x.reshape(x.size(0), 12, 307, 64)  # Manually reshape to (5, 1, 19, 64).to(torch.device('cuda:0))
 
             # Apply log softmax along the appropriate dimension
             x = F.log_softmax(x, dim=3)
@@ -1571,14 +1571,14 @@ class GARNOLDI(torch.nn.Module):
 ####################################################################
 def read_edge_list_csv():
     # Read the CSV file into a DataFrame
-    df = pd.read_csv('/content/AFDGCN_Garnoldi/data/PEMS04/PEMS04.csv')
+    df = pd.read_csv('/content/AFDGCN_Garnoldi/data/PEMS04/PEMS04.csv').to(torch.device('cuda:0))
 
     # Extract the 'from' and 'to' columns as numpy arrays
-    edges_from = df['from'].to_numpy()
-    edges_to = df['to'].to_numpy()
+    edges_from = df['from'].to_numpy().to(torch.device('cuda:0))
+    edges_to = df['to'].to_numpy().to(torch.device('cuda:0))
 
     # Create the edge index tensor
-    edge_index = torch.tensor([edges_from, edges_to], dtype=torch.long)
+    edge_index = torch.tensor([edges_from, edges_to], dtype=torch.long,device=torch.device('cuda:0'))
 
     return edge_index
 
