@@ -17,12 +17,13 @@ import scipy.sparse as sp
 
 # *****************************************  参数初始化配置      Parametre başlatma yapılandırması ****************************************** #
 init_seed(args.seed)
-'''
+
+# Ensure correct device assignment
 if torch.cuda.is_available():
-    torch.cuda.set_device(int(args.device[0]))
+    device = torch.device('cuda')
 else:
-'''
-args.device = 'cpu'
+    device = torch.device('cpu')
+args.device = device
 
 
 # A = get_Gaussian_matrix(args.graph_path, args.num_nodes, args.normalized_k, id_filename=args.filename_id)
