@@ -260,8 +260,11 @@ polynames = ['Monomial', 'Chebyshev', 'Legendre', 'Jacobi']
 
 methodnames = ['GARNOLDI']
 # methodnames = ['GCN', 'GAT', 'APPNP','ChebNet', 'JKNet','GPRGNN','BernNet']
-LR = [0.002]
-MYdropout = [0.5]
+LR = [0.01] 
+#,0.05,0.001
+#0.009
+MYdropout = [0.1]
+#,0.3,0.9]
 if args.mode == 'train':
 
     # sys.stdout = open('PubmedHyperOPTComplexes-L.txt', 'w')
@@ -285,7 +288,7 @@ if args.mode == 'train':
 
                         Net = GARNOLDI(args.num_nodes, input_dim, output_dim, hidden_dim, cheb_k, num_layers, embed_dim)
 
-                        trainer.train(Net,args.net,args.FuncName,args.ArnoldiInit)
+                        trainer.train(Net,args.net,args.FuncName,args.ArnoldiInit, args.dropuot, args.lr)
 elif args.mode == 'test':
     checkpoint = "./experiments/PEMS04/20240119141320/PEMS04_AFDGCN_best_model.pth"  # en yeni modeli kullan
     model.load_state_dict(torch.load(checkpoint, map_location=torch.device('cpu')))
