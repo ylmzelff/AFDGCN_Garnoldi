@@ -64,6 +64,9 @@ args.add_argument('--FuncName', type=str,
                         default='g_1')
 args.add_argument('--homophily', type=bool, default=False, help='Cora, Citeseer, Pubmed are homophily')
 args.add_argument('--Vandermonde', type=bool, default=False, help='Should we obtain coeffs with Vandermonde or Arnoldi?')
+args.add_argument('--dropout', default=0.1, type=float)
+args.add_argument('--lr', default=0.002, type=float)
+
 
 # 6. test
 args.add_argument('--mae_thresh', default=config['test']['mae_thresh'], type=eval)
