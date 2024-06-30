@@ -980,6 +980,9 @@ class GraphAttentionLayer(nn.Module):
         e = self.leakyrelu(e)
 
         zero_vec = -9e15 * torch.ones_like(e)
+        self.adj = self.adj.to(torch.device('cuda:0'))
+        e=e.to(torch.device('cuda:0'))
+        zero_vec = zero_vec.to(torch.device('cuda:0'))
         attention = torch.where(self.adj > 0, e, zero_vec)
         attention = F.softmax(attention, dim=1)
         attention = F.dropout(attention, self.dropout, training=self.training)
@@ -1571,12 +1574,10 @@ class GARNOLDI(torch.nn.Module):
 ####################################################################
 def read_edge_list_csv():
     # Read the CSV file into a DataFrame
-    df = pd.read_csv('/content/AFDGCN_Garnoldi/data/PEMS04/PEMS04.csv').to(torch.device('cuda:0'))
-
+    df = pd.read_csv('/content/AFDGCN_Garnoldi/data/PEMS04/PEMS04.csv')
     # Extract the 'from' and 'to' columns as numpy arrays
-    edges_from = df['from'].to_numpy().to(torch.device('cuda:0'))
-    edges_to = df['to'].to_numpy().to(torch.device('cuda:0'))
-
+    edges_from = df['from'].to_numpy()
+    edges_to = df['to'].to_numpy()
     # Create the edge index tensor
     edge_index = torch.tensor([edges_from, edges_to], dtype=torch.long,device=torch.device('cuda:0'))
 
