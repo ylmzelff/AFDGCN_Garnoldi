@@ -37,7 +37,7 @@ class Engine(object):
         self.logger = get_logger(args.log_dir, name=args.model, debug=args.debug)
         self.logger.info('Experiment log path in: {}'.format(args.log_dir))
          # Create a SummaryWriter for TensorBoard
-        self.writer = SummaryWriter(log_dir="/content/AFDGCN_BerNet/logs_yeni")
+        self.writer = SummaryWriter(log_dir="/content/AFDGCN_Garnoldi/logs_yeni")
 
     
     def train_epoch(self,Net):
@@ -137,7 +137,7 @@ class Engine(object):
         return val_loss, val_mae, val_rmse, val_mape
 
 
-    def train(self,Net,method,FuncName,ArnoldiInit):
+    def train(self,Net,method,FuncName,ArnoldiInit,dropout,lr):
         best_model = None
         best_loss = float('inf')
         not_improved_count = 0
@@ -149,10 +149,10 @@ class Engine(object):
         for epoch in tqdm(range(1, self.args.epochs + 1)):
             self.current_epoch = epoch
             t1 = time.time()
-            train_graph_name = f'{method}_{FuncName}_{ArnoldiInit}/Loss/Train'
-            mae_train_graph_name = f'{method}_{FuncName}_{ArnoldiInit}/Metrics/MAE_Train'
-            rmse_train_graph_name = f'{method}_{FuncName}_{ArnoldiInit}/Metrics/RMSE_Train'
-            mape_train_graph_name = f'{method}_{FuncName}_{ArnoldiInit}/Metrics/MAPE_Train'
+            train_graph_name = f'{method}_{FuncName}_{ArnoldiInit}_{lr}_{dropout}/Loss/Train'
+            mae_train_graph_name = f'{method}_{FuncName}_{ArnoldiInit}_{lr}_{dropout}/Metrics/MAE_Train'
+            rmse_train_graph_name = f'{method}_{FuncName}_{ArnoldiInit}_{lr}_{dropout}/Metrics/RMSE_Train'
+            mape_train_graph_name = f'{method}_{FuncName}_{ArnoldiInit}_{lr}_{dropout}/Metrics/MAPE_Train'
             
             # Add the scalars to TensorBoard
             
@@ -172,10 +172,10 @@ class Engine(object):
             else:
                 val_dataloader = self.val_loader
             t3 = time.time()
-            train_graph_name_val = f'{method}{FuncName}{ArnoldiInit}/Loss/Train_val'
-            mae_train_graph_name_val = f'{method}{FuncName}{ArnoldiInit}/Metrics/MAE_Train_val'
-            rmse_train_graph_name_val = f'{method}{FuncName}{ArnoldiInit}/Metrics/RMSE_Train_val'
-            mape_train_graph_name_val = f'{method}{FuncName}{ArnoldiInit}/Metrics/MAPE_Train_val'
+            train_graph_name_val = f'{method}{FuncName}{ArnoldiInit}{lr}{dropout}/Loss/Train_val'
+            mae_train_graph_name_val = f'{method}{FuncName}{ArnoldiInit}{lr}{dropout}/Metrics/MAE_Train_val'
+            rmse_train_graph_name_val = f'{method}{FuncName}{ArnoldiInit}{lr}{dropout}/Metrics/RMSE_Train_val'
+            mape_train_graph_name_val = f'{method}{FuncName}{ArnoldiInit}{lr}{dropout}/Metrics/MAPE_Train_val'
             val_epoch_loss, val_epoch_mae, val_epoch_rmse, val_epoch_mape= self.val_epoch(val_dataloader,Net)
             self.writer.add_scalar(train_graph_name_val, val_epoch_loss, epoch)
             self.writer.add_scalar(mae_train_graph_name_val, val_epoch_mae, epoch)
