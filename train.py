@@ -6,7 +6,6 @@ from config import args
 from datetime import datetime
 import torch.nn.functional as F
 from model.AFDGCN import Model as Network
-from model.AFDGCN import GARNOLDI
 from engine import Engine
 from lib.metrics import MAE_torch
 from lib.TrainInits import init_seed
@@ -14,56 +13,51 @@ from lib.dataloader import get_dataloader
 from lib.TrainInits import print_model_parameters
 from lib.load_graph import get_Gaussian_matrix, get_adjacency_matrix
 import scipy.sparse as sp
-
 # *****************************************  参数初始化配置      Parametre başlatma yapılandırması ****************************************** #
 init_seed(args.seed)
-
-# Ensure correct device assignment
+'''
 if torch.cuda.is_available():
-    device = torch.device('cuda')
+    torch.cuda.set_device(int(args.device[0]))
 else:
-    device = torch.device('cpu')
-args.device = device
+'''
+args.device = 'cpu'
 
+#A = get_Gaussian_matrix(args.graph_path, args.num_nodes, args.normalized_k, id_filename=args.filename_id)
 
-# A = get_Gaussian_matrix(args.graph_path, args.num_nodes, args.normalized_k, id_filename=args.filename_id)
-
-def myminimum(A, B):
-    BisBigger = A - B
+def myminimum(A,B):
+    BisBigger = A-B
     BisBigger.data = np.where(BisBigger.data >= 0, 1, 0)
     return A - A.multiply(BisBigger) + B.multiply(BisBigger)
-
 
 def normalize_adjHPI(adj):
     adj = sp.coo_matrix(adj)
 
     rowsum = np.array(adj.sum(1))
-
-    deg_row = np.tile(rowsum, (1, adj.shape[0]))
-
-    # deg_row = deg_row.T
+    
+    deg_row = np.tile(rowsum, (1,adj.shape[0]))
+    
+    #deg_row = deg_row.T
     deg_row = sp.coo_matrix(deg_row)
-
+    
     sim = adj.dot(adj)
-
-    # y = sim.copy().tocsr()
-    # y.data.fill(1)
+    
+    #y = sim.copy().tocsr()
+    #y.data.fill(1)
     X = sim.astype(bool).astype(int)
     deg_row = deg_row.multiply(X)
-
+    
     deg_row = myminimum(deg_row, deg_row.T)
-
-    sim = sim / deg_row
-    # sim = sp.coo_matrix(sim)
+    
+    sim = sim/deg_row
+    #sim = sp.coo_matrix(sim)
     whereAreNan = np.isnan(sim)
     whereAreInf = np.isinf(sim)
     sim[whereAreNan] = 0
     sim[whereAreInf] = 0
-
+    
     sim = sp.coo_matrix(sim)
-    # print(sim[0])
+    #print(sim[0])
     return sim.toarray()
-
 
 def normalize_adjAA(W):
     # Calculate row sums
@@ -80,16 +74,16 @@ def normalize_adjAA(W):
     d_mat_inv_sqrt = np.diag(d_inv_sqrt)
     # Calculate the normalized adjacency matrix
     DA = d_mat_inv_sqrt.dot(W)
-
+    
     return W.dot(DA)
 
 
 def normalize_adjCN(W):
-    # ctx = mx.gpu()
+   # ctx = mx.gpu()
     rowsum = np.array(W.sum(1))
     d_inv_sqrt = np.power(rowsum, -0.5).flatten()
     d_inv_sqrt[np.isinf(d_inv_sqrt)] = 0.
-    # d_mat_inv_sqrt = mx.nd.array(np.diag(d_inv_sqrt), ctx=ctx)
+   # d_mat_inv_sqrt = mx.nd.array(np.diag(d_inv_sqrt), ctx=ctx)
     return np.dot(W, W)
 
 
@@ -117,72 +111,81 @@ def normalize_adjHDI(adj):
 
     return sim
 
+def normalize_adj(adj):
+    adj = sp.coo_matrix(adj)
+    rowsum = np.array(adj.sum(1))
+    d_inv_sqrt = np.power(rowsum, -0.5).flatten()
+    d_inv_sqrt[np.isinf(d_inv_sqrt)] = 0.
+    d_mat_inv_sqrt = sp.diags(d_inv_sqrt)
+    sim = adj.dot(d_mat_inv_sqrt).transpose().dot(d_mat_inv_sqrt).tocoo()
+    
+    sim = np.array(sim.toarray())  # Convert the result to a NumPy array
 
-def mymaximum(A, B):
-    BisBigger = A - B
+    return sim
+
+def mymaximum (A, B):
+    BisBigger = A-B
     BisBigger.data = np.where(BisBigger.data <= 0, 1, 0)
     return A - A.multiply(BisBigger) + B.multiply(BisBigger)
-
 
 def perturb_adjacency_matrix(adj_matrix, perturbation_factor=0.1):
     """
     Perturb the adjacency matrix by adding a random perturbation.
-
+    
     Parameters:
     - adj_matrix: Original adjacency matrix
     - perturbation_factor: Factor to control the amount of perturbation
-
+    
     Returns:
     - Perturbed adjacency matrix
     """
     np.random.seed(42)  # Set a seed for reproducibility
     perturbation = np.random.uniform(low=-perturbation_factor, high=perturbation_factor, size=adj_matrix.shape)
     perturbed_adj_matrix = adj_matrix + perturbation
-
+    
     # Ensure the resulting matrix is symmetric
     perturbed_adj_matrix = 0.5 * (perturbed_adj_matrix + perturbed_adj_matrix.T)
-
+    
     return perturbed_adj_matrix
-
 
 # load dataset
 Adj = get_adjacency_matrix(args.graph_path, args.num_nodes, type='connectivity', id_filename=args.filename_id)
-# A = torch.FloatTensor(A).to(args.device)
+#A = torch.FloatTensor(A).to(args.device)
 
-# adj_tensor = torch.tensor(Adj, dtype=torch.float32)
-# A = F.softmax(F.relu(torch.mm(adj_tensor, adj_tensor.t())), dim=1)
-# A=F.softmax(F.relu(adj_tensor.t()), dim=1)
-Adj = normalize_adjHDI(Adj)
-A = torch.tensor(Adj, dtype=torch.float32)
+#adj_tensor = torch.tensor(Adj, dtype=torch.float32)
+#A = F.softmax(F.relu(torch.mm(adj_tensor, adj_tensor.t())), dim=1)
+#A=F.softmax(F.relu(adj_tensor.t()), dim=1)
+Adj=normalize_adj(Adj)
+A=torch.tensor(Adj, dtype=torch.float32)
 train_loader, val_loader, test_loader, scaler = get_dataloader(args,
                                                                normalizer=args.normalizer,
-                                                               tod=args.tod,
+                                                               tod=args.tod, 
                                                                dow=False,
-                                                               weather=False,
+                                                               weather=False, 
                                                                single=False)
-print("train loader ", len(train_loader))
+print("train loader ",len(train_loader))
 # *****************************************  初始化模型参数 ****************************************** #
 input_dim = 1
-hidden_dim = 64
+hidden_dim = 64 
 output_dim = 1
-embed_dim = 307  # 8
+embed_dim =8 #19#8   if you used adj, number of nodes should be entered here
 cheb_k = 2
-horizon = 12
-num_layers = 1
+horizon = 1
+num_layers = 1 
 heads = 4
-timesteps = 12
+timesteps = 1
 kernel_size = 5
-model = Network(num_node=args.num_nodes,
-                input_dim=input_dim,
-                hidden_dim=hidden_dim,
-                output_dim=output_dim,
-                embed_dim=embed_dim,
-                cheb_k=cheb_k,
-                horizon=horizon,
-                num_layers=num_layers,
-                heads=heads,
-                timesteps=timesteps,
-                A=A,
+model = Network(num_node = args.num_nodes, 
+                input_dim = input_dim, 
+                hidden_dim = hidden_dim, 
+                output_dim = output_dim, 
+                embed_dim = embed_dim, 
+                cheb_k = cheb_k, 
+                horizon = horizon, 
+                num_layers = num_layers, 
+                heads = heads, 
+                timesteps = timesteps, 
+                A = A,
                 kernel_size=kernel_size)
 model = model.to(args.device)
 # os.environ['CUDA_VISIBLE_DEVICES'] = '0, 1, 2, 3, 4'
@@ -196,8 +199,6 @@ for p in model.parameters():
         nn.init.uniform_(p)
 # print the number of model parameters
 print_model_parameters(model, only_num=False)
-
-
 # *****************************************  定义损失函数、优化器 ****************************************** #
 # 1. init loss function, optimizer
 def masked_mae_loss(scaler, mask_value):
@@ -207,10 +208,7 @@ def masked_mae_loss(scaler, mask_value):
             labels = scaler.inverse_transform(labels)
         mae = MAE_torch(pred=preds, true=labels, mask_value=mask_value)
         return mae
-
     return loss
-
-
 if args.loss_func == 'mask_mae':
     loss = masked_mae_loss(scaler, mask_value=0.0)
 elif args.loss_func == 'mae':
@@ -236,78 +234,41 @@ if args.lr_decay:
 # 1.config log path
 current_time = datetime.now().strftime('%Y%m%d%H%M%S')
 current_dir = os.path.dirname(os.path.realpath(__file__))
-log_dir = os.path.join(current_dir, 'experiments', args.dataset, current_time)
+log_dir = os.path.join(current_dir,'experiments', args.dataset, current_time)
 os.makedirs(log_dir, exist_ok=True)
 print(log_dir)
 args.log_dir = log_dir
 
 # 2.start training
-trainer = Engine(model,
-                 loss,
-                 optimizer,
-                 train_loader,
-                 val_loader,
-                 test_loader,
-                 scaler,
-                 args,
-                 lr_scheduler)
-
-#functionnames = ['g_band_rejection', 'g_band_pass', 'g_low_pass', 'g_high_pass']
-functionnames = ['g_0', 'g_1', 'g_2', 'g_3']
-polynames = ['Monomial', 'Chebyshev', 'Legendre', 'Jacobi']
-# polynames = ['Chebyshev']
-# functionnames = ['g_low_pass']
-
-methodnames = ['GARNOLDI']
-# methodnames = ['GCN', 'GAT', 'APPNP','ChebNet', 'JKNet','GPRGNN','BernNet']
-LR = [0.01] 
-#,0.05,0.001
-#0.009
-MYdropout = [0.1]
-#,0.3,0.9]
+trainer = Engine(model, 
+                  loss, 
+                  optimizer, 
+                  train_loader, 
+                  val_loader, 
+                  test_loader, 
+                  scaler,
+                  args, 
+                  lr_scheduler)
 if args.mode == 'train':
-
-    # sys.stdout = open('PubmedHyperOPTComplexes-L.txt', 'w')
-    print("HYPER PARAMETER TUNING")
-    for l in range(len(LR)):
-        print("---------------------------------------------- LR = ", LR[l])
-
-        for d in range(len(MYdropout)):
-            print("===================================== DROPOUT = ", MYdropout[d])
-            for i in range(len(functionnames)):
-                for j in range(len(polynames)):
-                    for t in range(len(methodnames)):
-                        args.net = methodnames[t]
-                        args.FuncName = functionnames[i]
-                        args.ArnoldiInit = polynames[j]
-                        gnn_name = args.net
-                        funcName = args.FuncName
-                        PolyName = args.ArnoldiInit
-                        args.lr = LR[l]
-                        args.dropout = MYdropout[d]
-
-                        Net = GARNOLDI(args.num_nodes, input_dim, output_dim, hidden_dim, cheb_k, num_layers, embed_dim)
-
-                        trainer.train(Net,args.net,args.FuncName,args.ArnoldiInit, args.dropuot, args.lr)
+    trainer.train()
 elif args.mode == 'test':
-    checkpoint = "./experiments/PEMS04/20240119141320/PEMS04_AFDGCN_best_model.pth"  # en yeni modeli kullan
+    checkpoint = "D:\AFDGCN\experiments\PEMS04\garnoldi_pems_best" # en yeni modeli kullan
     model.load_state_dict(torch.load(checkpoint, map_location=torch.device('cpu')))
-    Net = GARNOLDI(args.num_nodes, input_dim, output_dim, hidden_dim, cheb_k, num_layers, embed_dim)
 
-    # model.load_state_dict(torch.load(checkpoint))  # map_location='cuda:5'
+   # model.load_state_dict(torch.load(checkpoint))  # map_location='cuda:5'
     # node_embedding = model.node_embedding
     # adj = F.softmax(F.relu(torch.mm(node_embedding, node_embedding.transpose(0, 1))), dim=1) adj transpose
     # adj = torch.mm(node_embedding, node_embedding.transpose(0, 1))
     # print(adj.shape)
     # np.save('adaptive_matrix.npy', adj.detach().cpu().numpy())
-
+    
     model.load_state_dict(torch.load(checkpoint))  # map_location='cuda:5'
     adj_tensor = torch.tensor(Adj, dtype=torch.float32)
-    adj_tensor = adj_tensor.to(torch.device('cpu'))
+    adj_tensor = adj_tensor.to(torch.device('cuda')) 
     adj = F.softmax(F.relu(torch.mm(adj_tensor, adj_tensor.t())), dim=1)
     print(adj.shape)
     np.save('adaptive_matrix.npy', adj.detach().cpu().numpy())
     print("load saved model...")
-    trainer.test(model, trainer.args, test_loader, scaler, trainer.logger, Net)
+    trainer.test(model, trainer.args, test_loader, scaler, trainer.logger)
 else:
     raise ValueError
