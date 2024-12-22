@@ -37,10 +37,11 @@ class Engine(object):
         self.logger = get_logger(args.log_dir, name=args.model, debug=args.debug)
         self.logger.info('Experiment log path in: {}'.format(args.log_dir))
          # Create a SummaryWriter for TensorBoard
-        self.writer = SummaryWriter(log_dir="/content/AFDGCN_Garnoldi/logs_yeni")
+        self.writer = SummaryWriter(log_dir="/content/AFDGCN_Garnoldi/logs_konya_şubat")
+        
 
     
-    def train_epoch(self,Net):
+    def train_epoch(self):
         self.model.train()
         total_loss = 0
         total_mae = 0
@@ -51,7 +52,7 @@ class Engine(object):
             label = target[..., :1].to(data.device)    # (..., 1)
             # data and target shape: B, T, N, F; output shape: B, T, N, F
             self.optimizer.zero_grad()
-            output = self.model(data,Net)#afdgcn forward 
+            output = self.model(data)#afdgcn forward 
             if self.args.real_value:
                 label = self.scaler.inverse_transform(label)
             output = output.to(label.device)
@@ -82,7 +83,7 @@ class Engine(object):
         return train_epoch_loss,train_epoch_mae, train_epoch_rmse, train_epoch_mape
 
 
-    def val_epoch(self, val_dataloader,Net):
+    def val_epoch(self, val_dataloader):
         self.model.eval()
         total_val_loss = 0
         total_val_mae = 0
@@ -96,7 +97,7 @@ class Engine(object):
             for batch_idx, (data, target) in enumerate(val_dataloader):
                 data = data[..., :1]
                 label = target[..., :1].to(data.device) 
-                output = self.model(data,Net)
+                output = self.model(data)
                 #print("label:")
                 #print(label.shape)
                 #print("output: ")
@@ -137,7 +138,7 @@ class Engine(object):
         return val_loss, val_mae, val_rmse, val_mape
 
 
-    def train(self,Net,method,FuncName,ArnoldiInit,dropout,lr):
+    def train(self):
         best_model = None
         best_loss = float('inf')
         not_improved_count = 0
@@ -149,38 +150,22 @@ class Engine(object):
         for epoch in tqdm(range(1, self.args.epochs + 1)):
             self.current_epoch = epoch
             t1 = time.time()
-            train_graph_name = f'{method}_{FuncName}_{ArnoldiInit}_{lr}_{dropout}/Loss/Train'
-            mae_train_graph_name = f'{method}_{FuncName}_{ArnoldiInit}_{lr}_{dropout}/Metrics/MAE_Train'
-            rmse_train_graph_name = f'{method}_{FuncName}_{ArnoldiInit}_{lr}_{dropout}/Metrics/RMSE_Train'
-            mape_train_graph_name = f'{method}_{FuncName}_{ArnoldiInit}_{lr}_{dropout}/Metrics/MAPE_Train'
-            
-            # Add the scalars to TensorBoard
-            
-            train_epoch_loss, train_epoch_mae, train_epoch_rmse, train_epoch_mape = self.train_epoch(Net)
-            #self.writer.add_scalar('Loss/Train', train_epoch_loss, epoch)
-            #self.writer.add_scalar('Metrics/MAE_Train', train_epoch_mae, epoch)
-            #self.writer.add_scalar('Metrics/RMSE_Train', train_epoch_rmse, epoch)
-            #self.writer.add_scalar('Metrics/MAPE_Train', train_epoch_mape, epoch)
-
-            self.writer.add_scalar(train_graph_name, train_epoch_loss, epoch)
-            self.writer.add_scalar(mae_train_graph_name, train_epoch_mae, epoch)
-            self.writer.add_scalar(rmse_train_graph_name, train_epoch_rmse, epoch)
-            self.writer.add_scalar(mape_train_graph_name, train_epoch_mape, epoch)
+            train_epoch_loss, train_epoch_mae, train_epoch_rmse, train_epoch_mape = self.train_epoch()
+            self.writer.add_scalar('Loss/Train', train_epoch_loss, epoch)
+            self.writer.add_scalar('Metrics/MAE_Train', train_epoch_mae, epoch)
+            self.writer.add_scalar('Metrics/RMSE_Train', train_epoch_rmse, epoch)
+            self.writer.add_scalar('Metrics/MAPE_Train', train_epoch_mape, epoch)
             t2 = time.time()
             if self.val_loader == None:
                 val_dataloader = self.test_loader
             else:
                 val_dataloader = self.val_loader
             t3 = time.time()
-            train_graph_name_val = f'{method}{FuncName}{ArnoldiInit}{lr}{dropout}/Loss/Train_val'
-            mae_train_graph_name_val = f'{method}{FuncName}{ArnoldiInit}{lr}{dropout}/Metrics/MAE_Train_val'
-            rmse_train_graph_name_val = f'{method}{FuncName}{ArnoldiInit}{lr}{dropout}/Metrics/RMSE_Train_val'
-            mape_train_graph_name_val = f'{method}{FuncName}{ArnoldiInit}{lr}{dropout}/Metrics/MAPE_Train_val'
-            val_epoch_loss, val_epoch_mae, val_epoch_rmse, val_epoch_mape= self.val_epoch(val_dataloader,Net)
-            self.writer.add_scalar(train_graph_name_val, val_epoch_loss, epoch)
-            self.writer.add_scalar(mae_train_graph_name_val, val_epoch_mae, epoch)
-            self.writer.add_scalar(rmse_train_graph_name_val, val_epoch_rmse, epoch)
-            self.writer.add_scalar(mape_train_graph_name_val, val_epoch_mape, epoch)
+            val_epoch_loss, val_epoch_mae, val_epoch_rmse, val_epoch_mape= self.val_epoch(val_dataloader)
+            self.writer.add_scalar('Loss/Validation', val_epoch_loss, epoch)
+            self.writer.add_scalar('Metrics/MAE_Val', val_epoch_mae, epoch)
+            self.writer.add_scalar('Metrics/RMSE_Val', val_epoch_rmse, epoch)
+            self.writer.add_scalar('Metrics/MAPE_Val', val_epoch_mape, epoch)
             val_mae_values.append(val_epoch_mae)
             t4 = time.time()
             self.logger.info('Epoch {:03d}, Train Loss: {:.4f}, Valid Loss: {:.4f}, Training Time: {:.4f} secs.'.format(epoch, train_epoch_loss, val_epoch_loss, (t2 - t1)))
@@ -225,7 +210,7 @@ class Engine(object):
 
         # test
         self.model.load_state_dict(best_model)
-        self.test(self.model, self.args, self.test_loader, self.scaler, self.logger,Net)
+        self.test(self.model, self.args, self.test_loader, self.scaler, self.logger)
 
 
     def save_checkpoint(self):
@@ -239,7 +224,7 @@ class Engine(object):
 
 
     @staticmethod
-    def test(model, args, data_loader, scaler, logger,Net,path=None):
+    def test(model, args, data_loader, scaler, logger,path=None):
         if path != None:
             check_point = torch.load(path)
             state_dict = check_point['state_dict']
@@ -250,20 +235,18 @@ class Engine(object):
         y_pred = []
         y_true = []
         results = {'Output': []}
+        real_flow = {'Target': []}
         with torch.no_grad():
             for batch_idx, (data, target) in enumerate(data_loader):
                 data = data[..., :1].to(args.device)
                 label = target[..., :1].to(args.device)
-                output = model(data,Net)
+                output = model(data)
                 #results['Input'].extend(data.cpu().numpy())
-                #results['Target'].extend(label.cpu().numpy())
+                real_flow['Target'].extend(label.cpu().numpy())
                 results['Output'].extend(output.cpu().numpy())
                 y_true.append(label)
                 y_pred.append(output)
-        df_results = pd.DataFrame(results)
-
-        # Save the DataFrame to a CSV file
-        df_results.to_csv('test_results.csv', index=False)
+       
         y_true = scaler.inverse_transform(torch.cat(y_true, dim=0)).to(args.device)
         if args.real_value:
             y_pred = torch.cat(y_pred, dim=0).to(args.device).to(args.device)
@@ -272,7 +255,11 @@ class Engine(object):
         print(y_true.cpu().numpy().shape)
         # np.save('./NewNet_{}_true.npy'.format(args.dataset), y_true.cpu().numpy())
         # np.save('./NewNet_{}_pred.npy'.format(args.dataset), y_pred.cpu().numpy())
-
+        print(y_true.shape)
+        df_real_denormalized = pd.DataFrame({'Target': y_true.flatten()})
+        df_results_denormalized = pd.DataFrame({'Output': y_pred.flatten()})
+        df_real_denormalized.to_csv('real_flow.csv', index=False)
+        df_results_denormalized.to_csv('test_results.csv', index=False)
         for t in range(y_true.shape[1]):
             mae, rmse, mape = All_Metrics(y_pred[:, t, ...], y_true[:, t, ...], args.mae_thresh, args.rmse_thresh, args.mape_thresh)
             #print(y_pred.cpu().numpy().shape)
