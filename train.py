@@ -15,6 +15,7 @@ from lib.load_graph import get_Gaussian_matrix, get_adjacency_matrix
 import scipy.sparse as sp
 # *****************************************  参数初始化配置      Parametre başlatma yapılandırması ****************************************** #
 init_seed(args.seed)
+
 if torch.cuda.is_available() and torch.cuda.device_count() > 0:
     device = torch.device('cuda:0')  # Use the first GPU
     print(f"Using GPU: {torch.cuda.get_device_name(0)}")
@@ -156,7 +157,8 @@ Adj = get_adjacency_matrix(args.graph_path, args.num_nodes, type='connectivity',
 #A = F.softmax(F.relu(torch.mm(adj_tensor, adj_tensor.t())), dim=1)
 #A=F.softmax(F.relu(adj_tensor.t()), dim=1)
 Adj=normalize_adj(Adj)
-A=torch.tensor(Adj, dtype=torch.float32)
+A=torch.tensor(Adj, dtype=torch.float32).to(torch.device('cuda:0'))
+
 train_loader, val_loader, test_loader, scaler = get_dataloader(args,
                                                                normalizer=args.normalizer,
                                                                tod=args.tod, 
