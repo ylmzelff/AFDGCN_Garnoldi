@@ -15,12 +15,12 @@ from lib.load_graph import get_Gaussian_matrix, get_adjacency_matrix
 import scipy.sparse as sp
 # *****************************************  参数初始化配置      Parametre başlatma yapılandırması ****************************************** #
 init_seed(args.seed)
-'''
-if torch.cuda.is_available():
-    torch.cuda.set_device(int(args.device[0]))
+if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+    device = torch.device('cuda:0')  # Use the first GPU
+    print(f"Using GPU: {torch.cuda.get_device_name(0)}")
 else:
-'''
-args.device = 'cpu'
+    device = torch.device('cpu')
+    print("CUDA is not available. Falling back to CPU.")
 
 #A = get_Gaussian_matrix(args.graph_path, args.num_nodes, args.normalized_k, id_filename=args.filename_id)
 
