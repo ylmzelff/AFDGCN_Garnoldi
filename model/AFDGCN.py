@@ -887,7 +887,7 @@ class AVWGCN(nn.Module):
         node_num = node_embedding.shape[0]
         # 自适应的学习节点间的内s在隐藏关联获取邻接矩阵
         # D^(-1/2)AD^(-1/2)=softmax(ReLU(E * E^T)) - (N, N)
-        coeffs = generateCoeff(11, 'Chebyshev', 'g_high_pass', False, False, 0.00001, 2.0000, True)
+        coeffs = generateCoeff(11, 'Chebyshev', 'g_0', False, False, -0.9, 0.9, True)
         support = F.softmax(F.relu(torch.mm(node_embedding, node_embedding.transpose(0, 1))), dim=1)
         support = coeffs[0]*support
         # 这里得到的support表示标准化的拉普拉斯矩阵
