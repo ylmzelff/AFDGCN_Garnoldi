@@ -10,6 +10,7 @@ import math
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
+from config import GRAPH
 
 
 from typing import Optional, Tuple
@@ -22,9 +23,10 @@ from scipy.special import legendre
 from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.nn.conv.gcn_conv import gcn_norm
 from torch_geometric.typing import Adj, OptTensor
-from torch.nn import Parameter
+from torch.nn import Linear, Parameter
 
 import numpy as np
+import pandas as pd
 import scipy.sparse as sp
 import torch
 import torch.nn as nn
@@ -33,6 +35,7 @@ import scipy.io as sio
 
 from scipy.linalg import eig, eigh
 from scipy.sparse.linalg import eigs, eigsh
+from torch_geometric.utils import is_torch_sparse_tensor, spmm, to_edge_index
 
 
 from scipy.special import gamma, factorial
@@ -889,7 +892,7 @@ class AVWGCN(nn.Module):
         # D^(-1/2)AD^(-1/2)=softmax(ReLU(E * E^T)) - (N, N)
         coeffs = generateCoeff(11, 'Chebyshev', 'g_0', False, False, -0.9, 0.9, True)
         support = F.softmax(F.relu(torch.mm(node_embedding, node_embedding.transpose(0, 1))), dim=1)
-        support = coeffs[0]*support
+        #support = coeffs[0]*support
         # 这里得到的support表示标准化的拉普拉斯矩阵
         support_set = [torch.eye(node_num).to(support.device), support]
         for k in range(2, self.cheb_k):
@@ -1062,9 +1065,9 @@ class GraphAttentionLayer(nn.Module):
         Wh2 = torch.matmul(Wh, self.a[self.out_features:, :])
         # broadcast add
         e = Wh1 + Wh2.permute(0, 1, 3, 2)
-        e = self.leakyrelu(e).to(torch.device('cuda:0'))
+        e = self.leakyrelu(e) # move to gpu
 
-        zero_vec = -9e15 * torch.ones_like(e).to(torch.device('cuda:0'))
+        zero_vec = -9e15 * torch.ones_like(e) # move to gpu
         attention = torch.where(self.adj > 0, e, zero_vec)
         attention = F.softmax(attention, dim=1)
         attention = F.dropout(attention, self.dropout, training=self.training)
@@ -1365,7 +1368,7 @@ class APPNP_Net(torch.nn.Module):
 ####################################################################
 def read_edge_list_csv():
     # Read the CSV file into a DataFrame
-    df = pd.read_csv('/content/AFDGCN_BernNet/data/Konya/konya_kavşaklar.csv')
+    df = pd.read_csv(GRAPH)
 
     # Extract the 'from' and 'to' columns as numpy arrays
     edges_from = df['from'].to_numpy()
@@ -1395,9 +1398,9 @@ class Model(nn.Module):
         self.node_embedding = nn.Parameter(torch.randn(self.num_node, embed_dim), requires_grad=True)
         # encoder
         self.feature_attention = feature_attention(input_dim=input_dim, output_dim=hidden_dim, kernel_size=kernel_size)
-        self.encoder = AVWDCRNN(num_node, hidden_dim, hidden_dim, cheb_k, embed_dim, num_layers)
+        #self.encoder = AVWDCRNN(num_node, hidden_dim, hidden_dim, cheb_k, embed_dim, num_layers)
         #self.encoder = APPNP_Net(num_node, input_dim, output_dim, hidden_dim, cheb_k, num_layers, embed_dim)       
-        #self.encoder = GPRGNN(num_node,input_dim,output_dim, hidden_dim, cheb_k,num_layers,embed_dim)
+        self.encoder = GPRGNN(num_node,input_dim,output_dim, hidden_dim, cheb_k,num_layers,embed_dim)
         self.GraphAttentionLayer = GraphAttentionLayer(hidden_dim, hidden_dim, A, dropout=0.5, alpha=0.2, concat=True)
         self.MultiHeadAttention = MultiHeadAttention(embed_size=hidden_dim, heads=heads)
         # predict
@@ -1409,8 +1412,8 @@ class Model(nn.Module):
         batch_size = x.shape[0]
         x = self.feature_attention(x)
         init_state = self.encoder.init_hidden(batch_size)
-        output, _ = self.encoder(x, init_state, self.node_embedding)  # (B, T, N, hidden_dim)
-        #output = self.encoder(x)
+        #output, _ = self.encoder(x, init_state, self.node_embedding)  # (B, T, N, hidden_dim)
+        output = self.encoder(x)
         state = output[:, -1:, :, :]
         state = self.nconv(state)
         SAtt = self.GraphAttentionLayer(state)
