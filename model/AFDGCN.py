@@ -10,7 +10,7 @@ import math
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
-from config import GRAPH, ALGO, HIDDEN
+from config import GRAPH, ALGO
 
 
 from typing import Optional, Tuple
