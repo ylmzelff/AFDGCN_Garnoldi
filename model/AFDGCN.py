@@ -1396,6 +1396,8 @@ class Model(nn.Module):
         # encoder
         self.feature_attention = feature_attention(input_dim=input_dim, output_dim=hidden_dim, kernel_size=kernel_size)
         self.encoder = AVWDCRNN(num_node, hidden_dim, hidden_dim, cheb_k, embed_dim, num_layers)
+        #self.encoder = APPNP_Net(num_node, input_dim, output_dim, hidden_dim, cheb_k, num_layers, embed_dim)       
+        #self.encoder = GPRGNN(num_node,input_dim,output_dim, hidden_dim, cheb_k,num_layers,embed_dim)
         self.GraphAttentionLayer = GraphAttentionLayer(hidden_dim, hidden_dim, A, dropout=0.5, alpha=0.2, concat=True)
         self.MultiHeadAttention = MultiHeadAttention(embed_size=hidden_dim, heads=heads)
         # predict
@@ -1408,6 +1410,7 @@ class Model(nn.Module):
         x = self.feature_attention(x)
         init_state = self.encoder.init_hidden(batch_size)
         output, _ = self.encoder(x, init_state, self.node_embedding)  # (B, T, N, hidden_dim)
+        #output = self.encoder(x)
         state = output[:, -1:, :, :]
         state = self.nconv(state)
         SAtt = self.GraphAttentionLayer(state)
