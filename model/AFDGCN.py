@@ -10,7 +10,7 @@ import math
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
-from config import GRAPH
+from config import GRAPH, ALGO, HIDDEN
 
 
 from typing import Optional, Tuple
@@ -892,12 +892,24 @@ class AVWGCN(nn.Module):
         # D^(-1/2)AD^(-1/2)=softmax(ReLU(E * E^T)) - (N, N)
         coeffs = generateCoeff(11, 'Chebyshev', 'g_0', False, False, -0.9, 0.9, True)
         support = F.softmax(F.relu(torch.mm(node_embedding, node_embedding.transpose(0, 1))), dim=1)
-        #support = coeffs[0]*support
+        if ALGO == 'Garnoldi':
+          support = coeffs[0] * support
+        
+        #support = coeffs[0]*support # Open when running Garnoldi
         # 这里得到的support表示标准化的拉普拉斯矩阵
         support_set = [torch.eye(node_num).to(support.device), support]
         for k in range(2, self.cheb_k):
             # Z(k) = 2 * L * Z(k-1) - Z(k-2)
-            support_set.append(torch.matmul(2 * coeffs[k]*support, support_set[-1]) - support_set[-2])
+            if ALGO == 'Garnoldi':
+              support_set.append(torch.matmul(2 * coeffs[k] * support, support_set[-1]) - support_set[-2])
+            else:
+              support_set.append(torch.matmul(2 * support, support_set[-1]) - support_set[-2])
+
+
+            #Garnoldi
+            #support_set.append(torch.matmul(2 * coeffs[k]*support, support_set[-1]) - support_set[-2])
+            #Others
+            #support_set.append(torch.matmul(2 * support, support_set[-1]) - support_set[-2])
         supports = torch.stack(support_set, dim=0) # (K, N, N)
         # (N, D) * (D, K, C_in, C_out) -> (N, K, C_in, C_out)
         weights = torch.einsum('nd, dkio->nkio', node_embedding, self.weights_pool)
@@ -1065,9 +1077,9 @@ class GraphAttentionLayer(nn.Module):
         Wh2 = torch.matmul(Wh, self.a[self.out_features:, :])
         # broadcast add
         e = Wh1 + Wh2.permute(0, 1, 3, 2)
-        e = self.leakyrelu(e) # move to gpu
+        e = self.leakyrelu(e)
 
-        zero_vec = -9e15 * torch.ones_like(e) # move to gpu
+        zero_vec = -9e15 * torch.ones_like(e)
         attention = torch.where(self.adj > 0, e, zero_vec)
         attention = F.softmax(attention, dim=1)
         attention = F.dropout(attention, self.dropout, training=self.training)
@@ -1136,7 +1148,7 @@ class GPR_prop(MessagePassing):
 class GPRGNN(torch.nn.Module):
     def __init__(self, num_node, input_dim, output_dim, hidden, cheb_k, num_layers, embed_dim):
         super(GPRGNN, self).__init__()
-        self.lin1 = Linear(512, 64)  # (input_dim, hidden) 19, 1
+        self.lin1 = Linear(512, 64)  # (hidden_dim*num_nodes, hidden_dim) 19, 1
         self.lin2 = Linear(64, 512)
 
         self.prop1 = GPR_prop(cheb_k, 0.5, 'PPR', None)
@@ -1173,8 +1185,10 @@ class GPRGNN(torch.nn.Module):
             x = self.prop1(x, edge_index)
             x = x.transpose(0, 1)
 
+            # x: (B, T, N, hidden_dim)
             # Reshape it from (5, 1216) to (5, 1, 19, 64)
             x = x.view(x.size(0), 1, 8, 64)  # Manually reshape to (5, 1, 19, 64)
+          
 
             # Apply log softmax along the appropriate dimension
             x = F.log_softmax(x, dim=3)  # Assuming the last dimension (64) is the one to apply softmax to
@@ -1398,9 +1412,13 @@ class Model(nn.Module):
         self.node_embedding = nn.Parameter(torch.randn(self.num_node, embed_dim), requires_grad=True)
         # encoder
         self.feature_attention = feature_attention(input_dim=input_dim, output_dim=hidden_dim, kernel_size=kernel_size)
-        #self.encoder = AVWDCRNN(num_node, hidden_dim, hidden_dim, cheb_k, embed_dim, num_layers)
-        #self.encoder = APPNP_Net(num_node, input_dim, output_dim, hidden_dim, cheb_k, num_layers, embed_dim)       
-        self.encoder = GPRGNN(num_node,input_dim,output_dim, hidden_dim, cheb_k,num_layers,embed_dim)
+        if ALGO in ['Garnoldi', 'default']:
+            self.encoder = AVWDCRNN(num_node, hidden_dim, hidden_dim, cheb_k, embed_dim, num_layers)
+        else:
+            if ALGO == 'APPNP':
+                self.encoder = APPNP_Net(num_node, input_dim, output_dim, hidden_dim, cheb_k, num_layers, embed_dim)
+            elif ALGO == 'GPRGNN':
+                self.encoder = GPRGNN(num_node, input_dim, output_dim, hidden_dim, cheb_k, num_layers, embed_dim)
         self.GraphAttentionLayer = GraphAttentionLayer(hidden_dim, hidden_dim, A, dropout=0.5, alpha=0.2, concat=True)
         self.MultiHeadAttention = MultiHeadAttention(embed_size=hidden_dim, heads=heads)
         # predict
@@ -1412,8 +1430,14 @@ class Model(nn.Module):
         batch_size = x.shape[0]
         x = self.feature_attention(x)
         init_state = self.encoder.init_hidden(batch_size)
+        if ALGO in ['Garnoldi', 'default']:
+            init_state = self.encoder.init_hidden(batch_size)
+            output, _ = self.encoder(x, init_state, self.node_embedding)
+        else:
+            output = self.encoder(x)
+
         #output, _ = self.encoder(x, init_state, self.node_embedding)  # (B, T, N, hidden_dim)
-        output = self.encoder(x)
+        #output = self.encoder(x)
         state = output[:, -1:, :, :]
         state = self.nconv(state)
         SAtt = self.GraphAttentionLayer(state)
