@@ -1074,6 +1074,310 @@ class GraphAttentionLayer(nn.Module):
         else:
             return out
 
+
+class GPR_prop(MessagePassing):
+    def __init__(self, K, alpha, Init, Gamma=None, **kwargs):
+        super(GPR_prop, self).__init__(aggr='add', **kwargs)
+        self.K = K
+        self.alpha = alpha
+        self.Init = Init
+        self.Gamma = Gamma
+
+        assert Init in ['SGC', 'PPR', 'NPPR', 'Random', 'WS']
+        if Init == 'SGC':
+            TEMP = torch.zeros(K + 1)
+            TEMP[int(alpha)] = 1.0
+        elif Init == 'PPR':
+            TEMP = alpha * (1 - alpha) ** torch.arange(K + 1)
+            TEMP[-1] = (1 - alpha) ** K
+        elif Init == 'NPPR':
+            TEMP = (alpha) ** torch.arange(K + 1)
+            TEMP = TEMP / torch.sum(torch.abs(TEMP))
+        elif Init == 'Random':
+            bound = torch.sqrt(torch.tensor(3.0 / (K + 1)))
+            TEMP = torch.rand(K + 1) * 2 * bound - bound
+            TEMP = TEMP / torch.sum(torch.abs(TEMP))
+        elif Init == 'WS':
+            TEMP = Gamma
+
+        self.temp = Parameter(torch.tensor(TEMP))
+
+    def reset_parameters(self):
+        torch.nn.init.zeros_(self.temp)
+        for k in range(self.K + 1):
+            self.temp.data[k] = self.alpha * (1 - self.alpha) ** k
+        self.temp.data[-1] = (1 - self.alpha) ** self.K
+
+    def forward(self, x, edge_index):
+        edge_index, norm = gcn_norm(edge_index, num_nodes=x.size(1), dtype=x.dtype)
+        # edge_index, norm = custom_gcn_norm(edge_index, num_nodes=x.size(1), dtype=x.dtype)
+        hidden = x * self.temp[0]
+        x = x.T
+        hidden = hidden.T
+        for k in range(self.K):
+            x = self.propagate(edge_index, x=x, norm=norm)
+            # x = self.custom_propagate(edge_index, x=x, norm=norm)
+            # x = self.custom_propagate(edge_index, x=x.T, norm=norm)
+            gamma = self.temp[k + 1]
+            # hidden = hidden + gamma * x
+            hidden = hidden + gamma * x
+        return hidden
+
+    def message(self, x_j, norm):
+        return norm.view(-1, 1) * x_j
+
+    def _repr_(self):
+        return '{}(K={}, temp={})'.format(self._class.name_, self.K, self.temp)
+
+
+class GPRGNN(torch.nn.Module):
+    def __init__(self, num_node, input_dim, output_dim, hidden, cheb_k, num_layers, embed_dim):
+        super(GPRGNN, self).__init__()
+        self.lin1 = Linear(512, 64)  # (input_dim, hidden) 19, 1
+        self.lin2 = Linear(64, 512)
+
+        self.prop1 = GPR_prop(cheb_k, 0.5, 'PPR', None)
+
+        self.dprate = 0.5
+        self.dropout = 0.2
+        self.num_layers = num_layers
+        ###
+        self.dcrnnn_cells = nn.ModuleList()
+        self.dcrnnn_cells.append(AGCRNCell(num_node, input_dim, output_dim, cheb_k, embed_dim))
+        for _ in range(1, num_layers):
+            self.dcrnnn_cells.append(AGCRNCell(num_node, input_dim, output_dim, cheb_k, embed_dim))
+
+    def reset_parameters(self):
+        self.prop1.reset_parameters()
+
+    def forward(self, x):
+        edge_index = read_edge_list_csv()
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        x = x.to('cpu')
+        x_reshaped = x.reshape(x.size(0), -1)  # -1 infers the remaining dimension based on the input shape
+
+        # Apply linear layer
+        x = F.relu(self.lin1(x_reshaped))
+        # x = F.relu(self.lin1(x))
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        x = self.lin2(x)
+
+        if self.dprate == 0.0:
+            x = self.prop1(x, edge_index)
+            return F.log_softmax(x, dim=1)
+        else:
+            x = F.dropout(x, p=self.dprate, training=self.training)
+            x = self.prop1(x, edge_index)
+            x = x.transpose(0, 1)
+
+            # Reshape it from (5, 1216) to (5, 1, 19, 64)
+            x = x.view(x.size(0), 1, 8, 64)  # Manually reshape to (5, 1, 19, 64)
+
+            # Apply log softmax along the appropriate dimension
+            x = F.log_softmax(x, dim=3)  # Assuming the last dimension (64) is the one to apply softmax to
+            return x
+
+    def init_hidden(self, batch_size):
+        """
+        Initialize hidden states for all layers.
+
+        Args:
+        - batch_size (int): The batch size for the input data.
+
+        Returns:
+        - init_states (Tensor): Initialized hidden states for all layers.
+        """
+        init_states = []  # Initialize hidden states list for all layers
+        for i in range(self.num_layers):
+            # Assuming each cell in dcrnnn_cells has an init_hidden_state method
+            init_states.append(self.dcrnnn_cells[i].init_hidden_state(batch_size))
+
+        # Stack the initialized states along the first dimension to get (num_layers, B, N, hidden_dim)
+        return torch.stack(init_states, dim=0)
+
+
+##############################################################
+class APPNP(MessagePassing):
+    def __init__(self, K, alpha, dropout=0.,
+                 cached=False, add_self_loops=True,
+                 normalize=True, **kwargs):
+        kwargs.setdefault('aggr', 'add')
+        super().__init__(**kwargs)
+        self.K = K
+        self.alpha = alpha
+        self.dropout = dropout
+        self.cached = cached
+        self.add_self_loops = add_self_loops
+        self.normalize = normalize
+
+        self._cached_edge_index = None
+        self._cached_adj_t = None
+
+    def reset_parameters(self):
+        super().reset_parameters()
+        self._cached_edge_index = None
+        self._cached_adj_t = None
+
+    def forward(self, x, edge_index, edge_weight=None):
+        # print("APPNP.forward - Initial x:", x.size())
+        # print("APPNP.forward - Initial edge_index:", edge_index.size())
+        nodes = 19
+        if self.normalize:
+            if isinstance(edge_index, torch.Tensor):
+                cache = self._cached_edge_index
+                if cache is None:
+                    edge_index = read_edge_list_csv()
+                    # print("Edge index:", edge_index)
+                    # print("Number of nodes:", (int)(x.size(1) / 64))
+                    edge_index, edge_weight = gcn_norm(edge_index, edge_weight, num_nodes=(x.size(1)),
+                                                       dtype=x.dtype)
+                    # edge_index = torch.tensor([
+                    # [3, 2, 0, 1, 1, 7, 6, 4, 5, 5, 8, 11, 12, 11, 10, 9, 9, 13, 10, 14, 17, 17, 18, 16],
+                    # [2, 1, 1, 6, 7, 4, 5, 8, 8, 11, 12, 12, 9, 10, 9, 13, 14, 14, 17, 18, 18, 16, 15, 15]
+                    # ])
+                    # print("APP Edge index shape:", edge_index.shape)
+                    # print("Edge index content:", edge_index)
+                    # print("Edge weight shape:", edge_weight.shape)
+                    # print("APP Edge weight content:", edge_weight)
+                    if self.cached:
+                        self._cached_edge_index = edge_index
+                else:
+                    edge_index = cache
+                    # edge_index = torch.tensor([
+            # [3, 2, 0, 1, 1, 7, 6, 4, 5, 5, 8, 11, 12, 11, 10, 9, 9, 13, 10, 14, 17, 17, 18, 16],
+            # [2, 1, 1, 6, 7, 4, 5, 8, 8, 11, 12, 12, 9, 10, 9, 13, 14, 14, 17, 18, 18, 16, 15, 15]
+            # ])
+
+            elif isinstance(edge_index, SparseTensor):
+                cache = self._cached_adj_t
+                if cache is None:
+                    edge_index = gcn_norm(edge_index, num_nodes=x.size(1), dtype=x.dtype)
+                    if self.cached:
+                        self._cached_adj_t = edge_index
+                else:
+                    edge_index = cache
+
+        # print("APPNP.forward - Normalized edge_index:", edge_index.size())
+        x = x.T
+        h = x
+
+        for k in range(self.K):
+            # print(f"APPNP.forward - Iteration {k}, x size:", x.size())
+            if self.dropout > 0 and self.training:
+                x = F.dropout(x, p=self.dropout, training=self.training)
+                # print(f"APPNP.forward - After dropout, x size:", x.size())
+
+            # propagate_type: (x: Tensor)
+            x = self.propagate(edge_index, x=x)
+            # print(f"APPNP.forward - After propagate, x size:", x.size())
+
+            x = x * (1 - self.alpha)
+            # print("Shape of x:", x.shape)
+            # print("Shape of h:", h.shape)
+            # h = h.T
+            x = x + self.alpha * h
+
+        # print("APPNP.forward - Final x size:", x.size())
+        #x = x.T
+        # h = x
+        return x
+
+    def message(self, x_j: Tensor) -> Tensor:
+        return x_j
+
+    def message_and_aggregate(self, adj_t: Adj, x: Tensor) -> Tensor:
+        return spmm(adj_t, x, reduce=self.aggr)
+
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}(K={self.K}, alpha={self.alpha})'
+
+
+class APPNP_Net(torch.nn.Module):
+    def __init__(self, num_node, input_dim, output_dim, hidden, cheb_k, num_layers, embed_dim):
+        super(APPNP_Net, self).__init__()
+        self.lin1 = Linear(19648, 64)  # (512, 64) for Konya & (1216,64) for Kcetas
+        self.lin2 = Linear(64, 19648)
+        self.prop1 = APPNP(cheb_k, 0.5, 0.2, False, True, True)
+        self.dropout = 0.2
+        self.num_layers = num_layers
+        self.dcrnnn_cells = nn.ModuleList()
+        self.dcrnnn_cells.append(AGCRNCell(num_node, input_dim, output_dim, cheb_k, embed_dim))
+        for _ in range(1, num_layers):
+            self.dcrnnn_cells.append(AGCRNCell(num_node, input_dim, output_dim, cheb_k, embed_dim))
+
+    def reset_parameters(self):
+        self.lin1.reset_parameters()
+        self.lin2.reset_parameters()
+
+    def forward(self, x):
+        edge_index = read_edge_list_csv()
+        # edge_index, norm = gcn_norm(edge_index, num_nodes=x.size(1), dtype=x.dtype)
+
+        # print(edge_index)
+        # print("Initial x:", x)
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        x = x.to('cpu')
+
+        # Reshape the input
+        x_reshaped = x.reshape(x.size(0), -1)  # -1 infers the remaining dimension based on the input shape
+        # print("x reshaped to:", x_reshaped.size())
+
+        x = F.relu(self.lin1(x_reshaped))
+        x = F.dropout(x, p=self.dropout, training=self.training)
+
+        # print("After linear and dropout, x size:", x.size())
+        # print("Edge index:", edge_index)
+
+        x = self.lin2(x)
+        # print("After second linear layer, x size:", x.size())
+
+        x = self.prop1(x, edge_index)
+        # print("After propagation, x size:", x.size())
+        x = x.transpose(0, 1)
+        # Reshape it from (5, 1216) to (5, 1, 19, 64) for Kcetas
+        # (5, 1, 8, 64) for Konya
+        x = x.reshape(x.size(0), 1, 307, 64)  # Manually reshape to (5, 1, 19, 64)
+        # print("After reshaping, x size:", x.size())
+
+        # Apply log softmax along the appropriate dimension
+        x = F.log_softmax(x, dim=3)  # Assuming the last dimension (64) is the one to apply softmax to
+        # print("After log_softmax, x size:", x.size())
+        return x
+
+    def init_hidden(self, batch_size):
+        """
+        Initialize hidden states for all layers.
+
+        Args:
+        - batch_size (int): The batch size for the input data.
+
+        Returns:
+        - init_states (Tensor): Initialized hidden states for all layers.
+        """
+        init_states = []  # Initialize hidden states list for all layers
+        for i in range(self.num_layers):
+            # Assuming each cell in dcrnnn_cells has an init_hidden_state method
+            init_states.append(self.dcrnnn_cells[i].init_hidden_state(batch_size))
+
+        # Stack the initialized states along the first dimension to get (num_layers, B, N, hidden_dim)
+        return torch.stack(init_states, dim=0)
+
+####################################################################
+def read_edge_list_csv():
+    # Read the CSV file into a DataFrame
+    df = pd.read_csv('/content/AFDGCN_BernNet/data/Konya/konya_kavşaklar.csv')
+
+    # Extract the 'from' and 'to' columns as numpy arrays
+    edges_from = df['from'].to_numpy()
+    edges_to = df['to'].to_numpy()
+
+    # Create the edge index tensor
+    edge_index = torch.tensor([edges_from, edges_to], dtype=torch.long)
+
+    return edge_index
+
+
+
 class Model(nn.Module):
     def __init__(self, num_node, input_dim, hidden_dim, output_dim, embed_dim, cheb_k, horizon, num_layers, heads, timesteps, A, kernel_size):
         super(Model, self).__init__()
