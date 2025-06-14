@@ -2,9 +2,9 @@ import pandas as pd
 
 # Input and output file paths
 
-input_file = '/content/drive/MyDrive/test_results.csv'
+input_file = '/content/drive/MyDrive/real_flow.csv'
 # Replace with the path to your input file
-output_file = 'test_gar.csv'  # Replace with the desired path for the output file
+output_file = 'real_flow_after_predcsv.csv'  # Replace with the desired path for the output file
 
 # Read the input CSV file
 df_input = pd.read_csv(input_file, skiprows=1, names=["flow"])  # Read the file with one column named "flow"
