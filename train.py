@@ -1,4 +1,5 @@
 import os
+import os
 import torch
 import numpy as np
 import torch.nn as nn
@@ -170,7 +171,7 @@ print("train loader ",len(train_loader))
 input_dim = 1
 hidden_dim = 64 
 output_dim = 1
-embed_dim =8 #19#8   if you used adj, number of nodes should be entered here
+embed_dim =307 #19#8   if you used adj, number of nodes should be entered here
 cheb_k = 2
 horizon = 1
 num_layers = 1 
