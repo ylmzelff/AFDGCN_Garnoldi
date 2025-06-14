@@ -18,7 +18,7 @@ start_date = pd.Timestamp("2025-02-01 00:00")  # Adjusted to reflect test period
 # Time interval details
 time_interval = 10  # Time interval in minutes
 daily_time_steps = int((24 * 60) / time_interval)  # Number of timesteps per day
-test_time_steps = 604  # Number of test timesteps (~48.42 hours)
+test_time_steps = 3397  # Number of test timesteps (~48.42 hours)
 
 # Extract relevant test data
 df_pred_location = df_pred[df_pred['location'] == 0].iloc[-test_time_steps:]
