@@ -8,7 +8,7 @@ real_data_path = '/content/drive/MyDrive//real_flow_after_predcsv.csv'
 df_real = pd.read_csv(real_data_path)
 
 # Load Prediction Data
-pred_data_path = '/content/drive/MyDrive//test_gar.csv'
+pred_data_path = '/content/drive/MyDrive//test_results_after_predcsv.csv'
 #pred_data_path = r"./test_result_pems_def.csv"
 df_pred = pd.read_csv(pred_data_path, skiprows=1, header=None, names=['timestep', 'location', 'flow', 'occupy', 'speed'])
 
