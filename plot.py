@@ -31,7 +31,7 @@ time_steps_real = [start_date + pd.Timedelta(minutes=time_interval * i) for i in
 # Define zoom range based on date and hour
 #zoom_start_date = pd.Timestamp("2025-02-01 02:00")  # Modify this
 #zoom_end_date = pd.Timestamp("2025-02-01 12:00")    # Modify this
-zoom_start_date = pd.Timestamp("2025-02-02 00:00")
+zoom_start_date = pd.Timestamp("2025-02-02 01:00")
 zoom_end_date = pd.Timestamp("2025-02-02 12:00")
 
 zoom_start = next(i for i, t in enumerate(time_steps_real) if t >= zoom_start_date)
