@@ -16,7 +16,7 @@ df_pred = pd.read_csv(pred_data_path, skiprows=1, header=None, names=['timestep'
 start_date = pd.Timestamp("2025-02-01 00:00")  # Adjusted to reflect test period
 
 # Time interval details
-time_interval = 10  # Time interval in minutes
+time_interval = 10 #5 # Time interval in minutes
 daily_time_steps = int((24 * 60) / time_interval)  # Number of timesteps per day
 test_time_steps = 3397  # Number of test timesteps (~48.42 hours)
 
