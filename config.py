@@ -17,7 +17,7 @@ MODEL = 'AFDGCN'
 GRAPH = "./data/PEMS04/PEMS04.csv"
 K = 0.1
 ALGO_OPTIONS = ['default', 'Garnoldi', 'APPNP', 'GPRGNN']
-ALGO = ALGO_OPTIONS[0]
+ALGO = ALGO_OPTIONS[1]
 # FILENAME_ID = "./data/PEMS03/PEMS03.txt"
 FILENAME_ID = None
 
