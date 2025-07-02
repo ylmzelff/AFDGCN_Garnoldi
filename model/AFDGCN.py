@@ -1333,7 +1333,7 @@ class APPNP_Net(torch.nn.Module):
         # print(edge_index)
         # print("Initial x:", x)
         x = F.dropout(x, p=self.dropout, training=self.training)
-        x = x.to('cpu')
+        #x = x.to('cpu')
 
         # Reshape the input
         x_reshaped = x.reshape(x.size(0), -1)  # -1 infers the remaining dimension based on the input shape
