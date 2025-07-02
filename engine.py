@@ -38,9 +38,7 @@ class Engine(object):
         self.logger.info('Experiment log path in: {}'.format(args.log_dir))
          # Create a SummaryWriter for TensorBoard
         self.writer = SummaryWriter(log_dir="/content/AFDGCN_Garnoldi/logs_konya_şubat")
-        
 
-    
     def train_epoch(self):
         self.model.train()
         total_loss = 0
@@ -48,14 +46,15 @@ class Engine(object):
         total_rmse = 0
         total_mape = 0
         for batch_idx, (data, target) in enumerate(self.train_loader):
-            data = data[..., :1]
-            label = target[..., :1].to(data.device)    # (..., 1)
-            # data and target shape: B, T, N, F; output shape: B, T, N, F
+            data = data[..., :1].to(self.args.device)  # ✅ Eklenen satır
+            label = target[..., :1].to(self.args.device)  # ✅ label da aynı cihaza gönderilmeli
+
             self.optimizer.zero_grad()
-            output = self.model(data)#afdgcn forward 
+            output = self.model(data)  # AFDGCN forward
+
             if self.args.real_value:
                 label = self.scaler.inverse_transform(label)
-            output = output.to(label.device)
+            output = output.to(label.device)  # bu zaten eşleşmiş olacak
 
             loss = self.loss(output, label)
             mae = torch.abs(output - label).mean()
@@ -66,22 +65,20 @@ class Engine(object):
             total_mape += mape.item()
             loss.backward()
 
-            # add max grad clipping
             if self.args.grad_norm:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
             self.optimizer.step()
             total_loss += loss.item()
-        
+
         train_epoch_loss = total_loss / self.train_per_epoch
         train_epoch_mae = total_mae / self.train_per_epoch
         train_epoch_rmse = total_rmse / self.train_per_epoch
         train_epoch_mape = total_mape / self.train_per_epoch
-        # learning rate decay
+
         if self.args.lr_decay:
             self.lr_scheduler.step()
-        
-        return train_epoch_loss,train_epoch_mae, train_epoch_rmse, train_epoch_mape
 
+        return train_epoch_loss, train_epoch_mae, train_epoch_rmse, train_epoch_mape
 
     def val_epoch(self, val_dataloader):
         self.model.eval()
