@@ -23,7 +23,7 @@ if torch.cuda.is_available() and torch.cuda.device_count() > 0:
 else:
     device = torch.device('cpu')
     print("CUDA is not available. Falling back to CPU.")
-
+args.device = device
 #A = get_Gaussian_matrix(args.graph_path, args.num_nodes, args.normalized_k, id_filename=args.filename_id)
 
 def myminimum(A,B):
