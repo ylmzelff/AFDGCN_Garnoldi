@@ -5,19 +5,19 @@ import configparser
 Mode = 'train'
 DEBUG = 'True'
 #DATASET = 'Kcetas'
-DATASET = 'PEMS04'
-#DATASET = 'Konya'
+#DATASET = 'PEMS04'
+DATASET = 'Konya'
 #DATASET = 'Kayseri'
 #DEVICE = 'cuda:0'
 DEVICE = 'cpu'
 MODEL = 'AFDGCN'
 #GRAPH = "/content/AFDGCN_Garnoldi/data/Kayseri/kayseri_kavsaklar.csv"
-#GRAPH = "/content/AFDGCN_Garnoldi/data/Konya/konya_kavşaklar.csv"
+GRAPH = "/content/AFDGCN_Garnoldi/data/Konya/konya_kavşaklar.csv"
 #GRAPH = "/content/AFDGCN_Garnoldi/data/Kcetas/conn_graph.csv"
-GRAPH = "./data/PEMS04/PEMS04.csv"
+#GRAPH = "./data/PEMS04/PEMS04.csv"
 K = 0.1
 ALGO_OPTIONS = ['default', 'Garnoldi', 'APPNP', 'GPRGNN']
-ALGO = ALGO_OPTIONS[2]
+ALGO = ALGO_OPTIONS[0]
 # FILENAME_ID = "./data/PEMS03/PEMS03.txt"
 FILENAME_ID = None
 
