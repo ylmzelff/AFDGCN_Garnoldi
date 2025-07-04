@@ -102,8 +102,8 @@ for basis in active_bases:
             mean_val = df_all[df_all["Model"] == model]["Validation MAE"].mean()
             offset = mean_val * 0.05  # Etiketi biraz yukarı taşı
             ax.annotate(format_val(mean_val),
-                        (xticks[i], mean_val + offset),
-                        ha='center', va='bottom',
+                        (xticks[i], df_all[df_all["Model"] == model]["Validation MAE"].min() - mean_val * 0.05),
+                        ha='center', va='top',
                         fontsize=10, fontweight='bold')
 
         out_path = f"figures/{basis.lower()}/all_models_comparison_{basis.lower()}_cleaned.png"
