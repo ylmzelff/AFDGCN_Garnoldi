@@ -901,7 +901,10 @@ class AVWGCN(nn.Module):
         for k in range(2, self.cheb_k):
             # Z(k) = 2 * L * Z(k-1) - Z(k-2)
             if ALGO == 'Garnoldi':
-              support_set.append(torch.matmul(2 * coeffs[k] * support, support_set[-1]) - support_set[-2])
+              #monomial
+              support_set.append(torch.matmul(support, support_set[-1]))
+              #Chebyshev
+              #support_set.append(torch.matmul(2 * coeffs[k] * support, support_set[-1]) - support_set[-2])
             else:
               support_set.append(torch.matmul(2 * support, support_set[-1]) - support_set[-2])
 
