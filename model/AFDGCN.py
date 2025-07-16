@@ -880,6 +880,8 @@ class AVWGCN(nn.Module):
         self.cheb_k = cheb_k
         self.weights_pool = nn.Parameter(torch.FloatTensor(embed_dim, cheb_k, in_dim, out_dim))
         self.bias_pool = nn.Parameter(torch.FloatTensor(embed_dim, out_dim))
+        alpha = 0.0
+        beta = 0.0
 
     def forward(self, x, node_embedding):
         """
@@ -901,18 +903,39 @@ class AVWGCN(nn.Module):
         for k in range(2, self.cheb_k):
             # Z(k) = 2 * L * Z(k-1) - Z(k-2)
             if ALGO == 'Garnoldi':
-              #monomial
-              support_set.append(torch.matmul(support, support_set[-1]))
               #Chebyshev
               #support_set.append(torch.matmul(2 * coeffs[k] * support, support_set[-1]) - support_set[-2])
+              
+              #Monomial
+              support_set.append(torch.matmul(support*coeffs[k], support_set[-1]))
+              
+              #Legendre
+              #a = (2 * k - 1) / k
+              #b = (k - 1) / k
+              #support_set.append(torch.matmul(a * support*coeffs[k], support_set[-1]) - b * support_set[-2])
+
+              #Jacobi
+              #a = (2 * k + alpha + beta - 1) * (2 * k + alpha + beta) / (2 * k * (k + alpha + beta))
+              #b = (k + alpha - 1) * (k + beta - 1) * (2 * k + alpha + beta) / (2 * k * (k + alpha + beta) * (2 * k + alpha + beta - 2))
+              #support_set.append(torch.matmul(a * support*coeffs[k], support_set[-1]) - b * support_set[-2])
             else:
+              #Chebyshev
               support_set.append(torch.matmul(2 * support, support_set[-1]) - support_set[-2])
+              
+              #Monomial
+              support_set.append(torch.matmul(support, support_set[-1]))
+              
+              #Legendre
+              #a = (2 * k - 1) / k
+              #b = (k - 1) / k
+              #support_set.append(torch.matmul(a * support, support_set[-1]) - b * support_set[-2])
+
+              #Jacobi
+              #a = (2 * k + alpha + beta - 1) * (2 * k + alpha + beta) / (2 * k * (k + alpha + beta))
+              #b = (k + alpha - 1) * (k + beta - 1) * (2 * k + alpha + beta) / (2 * k * (k + alpha + beta) * (2 * k + alpha + beta - 2))
+              #support_set.append(torch.matmul(a * support, support_set[-1]) - b * support_set[-2])
 
 
-            #Garnoldi
-            #support_set.append(torch.matmul(2 * coeffs[k]*support, support_set[-1]) - support_set[-2])
-            #Others
-            #support_set.append(torch.matmul(2 * support, support_set[-1]) - support_set[-2])
         supports = torch.stack(support_set, dim=0) # (K, N, N)
         # (N, D) * (D, K, C_in, C_out) -> (N, K, C_in, C_out)
         weights = torch.einsum('nd, dkio->nkio', node_embedding, self.weights_pool)
