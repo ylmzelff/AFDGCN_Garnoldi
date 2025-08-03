@@ -1,31 +1,40 @@
+# pred_csv.py (Updated for arm-based data)
+import sys
 import pandas as pd
 
-# Input and output file paths
-input_file = 'C:\\Users\\beyza\\Downloads\\test_results_garson.csv'  # Replace with the path to your input file
-output_file = 'test_gar.csv'  # Replace with the desired path for the output file
+if len(sys.argv) != 3:
+    print("Usage: python pred_csv.py <input_file> <output_file>")
+    sys.exit(1)
 
-# Read the input CSV file
-df_input = pd.read_csv(input_file, skiprows=1, names=["flow"])  # Read the file with one column named "flow"
-df_input["flow"] = df_input["flow"].round().astype(int).abs()
+input_file  = sys.argv[1]
+output_file = sys.argv[2]
 
-# Create lists to hold the generated data
+df_input = pd.read_csv(input_file, skiprows=1, names=["flow"])
+
+if df_input.empty:
+    print(f"❌ Error: Input file {input_file} is empty.")
+    sys.exit(1)
+
+df_input["flow"] = df_input["flow"].fillna(0).round().astype(int).abs()
+
+# Adjust the number of arms to match your dataset
+num_arms = 15  # Update this if the number of arms changes (based on your Excel file)
+
 timesteps = []
 locations = []
 flows = []
 occupies = []
 speeds = []
 
-# Process the data
 for i in range(len(df_input)):
-    timestep = i // 8 + 1  # Calculate the timestep (1-based)
-    location = i % 8       # Calculate the location (0-7)
+    timestep = i // num_arms + 1
+    location = i % num_arms
     timesteps.append(timestep)
     locations.append(location)
     flows.append(df_input.loc[i, "flow"])
-    occupies.append(1)  # Occupy is always 1
-    speeds.append(1)    # Speed is always 1
+    occupies.append(1)
+    speeds.append(1)
 
-# Create the output DataFrame
 df_output = pd.DataFrame({
     "timestep": timesteps,
     "location": locations,
@@ -34,7 +43,5 @@ df_output = pd.DataFrame({
     "speed": speeds
 })
 
-# Save the output DataFrame to a CSV file
 df_output.to_csv(output_file, index=False)
-
-print(f"Output file saved as {output_file}")
+print(f"✅ Output file saved as {output_file}, shape: {df_output.shape}")
