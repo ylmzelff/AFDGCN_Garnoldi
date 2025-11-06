@@ -22,10 +22,10 @@ def load_st_dataset(dataset):
         data_path = os.path.join('/content/AFDGCN_Garnoldi/data/Konya/konya_kavşak.npz')
         data = np.load(data_path)['data'][:, :, :1]  # only the first dimension, traffic flow data
     elif dataset == 'Kayseri':
-        data_path = os.path.join('/content/AFDGCN_Garnoldi/data/Kayseri/kayseri_kavsaklar.npz')
+        data_path = os.path.join('/content/AFDGCN_Garnoldi/data/Kayseri/kol_bazli_1.npz')
         data = np.load(data_path)['data'][:, :, :1]  # only the first dimension, traffic flow data
     elif dataset == 'Kayseri_Serit':
-        data_path = os.path.join('/content/AFDGCN_Garnoldi/data/Kayseri/kol_bazli_0.npz')
+        data_path = os.path.join('/content/AFDGCN_Garnoldi/data/Kayseri/kol_bazli_1.npz')
         data = np.load(data_path)['data'][:, :, :1]  # only the first dimension, traffic flow data
     else:
         raise ValueError

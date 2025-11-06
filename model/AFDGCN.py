@@ -1174,8 +1174,8 @@ class GPR_prop(MessagePassing):
 class GPRGNN(torch.nn.Module):
     def __init__(self, num_node, input_dim, output_dim, hidden, cheb_k, num_layers, embed_dim):
         super(GPRGNN, self).__init__()
-        self.lin1 = Linear(960, 64)  # (hidden_dim*num_nodes, hidden_dim) 19, 1
-        self.lin2 = Linear(64, 960)
+        self.lin1 = Linear(768, 64)  # (hidden_dim*num_nodes, hidden_dim) 19, 1
+        self.lin2 = Linear(64, 768)
 
         self.prop1 = GPR_prop(cheb_k, 0.5, 'PPR', None)
 
@@ -1213,7 +1213,7 @@ class GPRGNN(torch.nn.Module):
 
             # x: (B, T, N, hidden_dim)
             # Reshape it from (5, 1216) to (5, 1, 19, 64)
-            x = x.view(x.size(0), 1, 15, 64)  # Manually reshape to (5, 1, 19, 64)
+            x = x.view(x.size(0), 1, 12, 64)  # Manually reshape to (5, 1, 19, 64)
           
 
             # Apply log softmax along the appropriate dimension
@@ -1338,8 +1338,8 @@ class APPNP(MessagePassing):
 class APPNP_Net(torch.nn.Module):
     def __init__(self, num_node, input_dim, output_dim, hidden, cheb_k, num_layers, embed_dim):
         super(APPNP_Net, self).__init__()
-        self.lin1 = Linear(960, 64)  # (512, 64) for Konya & (1216,64) for Kcetas
-        self.lin2 = Linear(64, 960)
+        self.lin1 = Linear(768, 64)  # (512, 64) for Konya & (1216,64) for Kcetas
+        self.lin2 = Linear(64, 768)
         self.prop1 = APPNP(cheb_k, 0.5, 0.2, False, True, True)
         self.dropout = 0.2
         self.num_layers = num_layers
@@ -1379,7 +1379,7 @@ class APPNP_Net(torch.nn.Module):
         x = x.transpose(0, 1)
         # Reshape it from (5, 1216) to (5, 1, 19, 64) for Kcetas
         # (5, 1, 8, 64) for Konya
-        x = x.reshape(x.size(0), 1, 15, 64)  # Manually reshape to (5, 1, 19, 64)
+        x = x.reshape(x.size(0), 1, 12, 64)  # Manually reshape to (5, 1, 19, 64)
         # print("After reshaping, x size:", x.size())
 
         # Apply log softmax along the appropriate dimension

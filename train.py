@@ -158,7 +158,7 @@ Adj = get_adjacency_matrix(args.graph_path, args.num_nodes, type='connectivity',
 #A=F.softmax(F.relu(adj_tensor.t()), dim=1)
 Adj=normalize_adj(Adj)
 A=torch.tensor(Adj, dtype=torch.float32)
-#A=torch.tensor(Adj, dtype=torch.float32).to(torch.device('cuda:0'))
+#A=torch.tensor(Adj, dtype=torch.float32).to(torch.device('cpu'))
 
 train_loader, val_loader, test_loader, scaler = get_dataloader(args,
                                                                normalizer=args.normalizer,
@@ -171,7 +171,7 @@ print("train loader ",len(train_loader))
 input_dim = 1
 hidden_dim = 64 
 output_dim = 1
-embed_dim = 15 #19#8   if you used adj, number of nodes should be entered here
+embed_dim = 12 #19#8   if you used adj, number of nodes should be entered here
 cheb_k = 2
 horizon = 1
 num_layers = 1 
@@ -255,7 +255,7 @@ trainer = Engine(model,
 if args.mode == 'train':
     trainer.train()
 elif args.mode == 'test':
-    checkpoint = "D:\AFDGCN\experiments\PEMS04\garnoldi_pems_best" # en yeni modeli kullan
+    checkpoint = "AFDGCN/experiments/PEMS04/garnoldi_pems_best" # en yeni modeli kullan
     model.load_state_dict(torch.load(checkpoint, map_location=torch.device('cpu')))
 
    # model.load_state_dict(torch.load(checkpoint))  # map_location='cuda:5'
@@ -267,7 +267,7 @@ elif args.mode == 'test':
     
     model.load_state_dict(torch.load(checkpoint))  # map_location='cuda:5'
     adj_tensor = torch.tensor(Adj, dtype=torch.float32)
-    adj_tensor = adj_tensor.to(torch.device('cuda')) 
+    adj_tensor = adj_tensor.to(torch.device('cpu')) 
     adj = F.softmax(F.relu(torch.mm(adj_tensor, adj_tensor.t())), dim=1)
     print(adj.shape)
     np.save('adaptive_matrix.npy', adj.detach().cpu().numpy())
