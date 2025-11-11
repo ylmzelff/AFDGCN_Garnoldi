@@ -17,8 +17,8 @@ speeds = []
 
 # Process the data
 for i in range(len(df_input)):
-    timestep = i // 8 + 1  # Calculate the timestep (1-based)
-    location = i % 8       # Calculate the location (0-7)
+    timestep = i // 15 + 1  # Calculate the timestep (1-based)
+    location = i % 15       # Calculate the location (0-7)
     timesteps.append(timestep)
     locations.append(location)
     flows.append(df_input.loc[i, "flow"])

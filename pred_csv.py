@@ -18,7 +18,7 @@ if df_input.empty:
 df_input["flow"] = df_input["flow"].fillna(0).round().astype(int).abs()
 
 # Adjust the number of arms to match your dataset
-num_arms = 15  # Update this if the number of arms changes (based on your Excel file)
+num_arms = 12  # Update this if the number of arms changes (based on your Excel file)
 
 timesteps = []
 locations = []
