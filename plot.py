@@ -7,7 +7,7 @@ import sys
 
 # Load real and predicted data
 df_real = pd.read_csv("./real_flow_gar.csv")
-df_pred = pd.read_csv("./test_gar.csv", skiprows=1, header=None,
+df_pred = pd.read_csv("./test_results_gar.csv", skiprows=1, header=None,
                       names=["timestep", "location", "flow", "occupy", "speed"])
 
 # Parameters
