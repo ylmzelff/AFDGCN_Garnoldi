@@ -904,10 +904,10 @@ class AVWGCN(nn.Module):
             # Z(k) = 2 * L * Z(k-1) - Z(k-2)
             if ALGO == 'Garnoldi':
               #Chebyshev
-              support_set.append(torch.matmul(2 * coeffs[k] * support, support_set[-1]) - support_set[-2])
+              #support_set.append(torch.matmul(2 * coeffs[k] * support, #support_set[-1]) - support_set[-2])
               
               #Monomial
-              #support_set.append(torch.matmul(support*coeffs[k], support_set[-1]))
+              support_set.append(torch.matmul(support*coeffs[k], support_set[-1]))
               
               #Legendre
               #a = (2 * k - 1) / k
