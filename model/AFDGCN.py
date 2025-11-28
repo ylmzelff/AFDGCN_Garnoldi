@@ -892,7 +892,7 @@ class AVWGCN(nn.Module):
         node_num = node_embedding.shape[0]
         # 自适应的学习节点间的内s在隐藏关联获取邻接矩阵
         # D^(-1/2)AD^(-1/2)=softmax(ReLU(E * E^T)) - (N, N)
-        coeffs = generateCoeff(11, 'Monomial', 'g_1', False, False, -0.9, 0.9, True)
+        coeffs = generateCoeff(11, 'Jacobi', 'g_0', False, False, -0.9, 0.9, True)
         support = F.softmax(F.relu(torch.mm(node_embedding, node_embedding.transpose(0, 1))), dim=1)
         if ALGO == 'Garnoldi':
           support = coeffs[0] * support
@@ -907,7 +907,7 @@ class AVWGCN(nn.Module):
               #support_set.append(torch.matmul(2 * coeffs[k] * support, #support_set[-1]) - support_set[-2])
               
               #Monomial
-              support_set.append(torch.matmul(support*coeffs[k], support_set[-1]))
+              #support_set.append(torch.matmul(support*coeffs[k], support_set[-1]))
               
               #Legendre
               #a = (2 * k - 1) / k
@@ -915,9 +915,9 @@ class AVWGCN(nn.Module):
               #support_set.append(torch.matmul(a * support*coeffs[k], support_set[-1]) - b * support_set[-2])
 
               #Jacobi
-              #a = (2 * k + alpha + beta - 1) * (2 * k + alpha + beta) / (2 * k * (k + alpha + beta))
-              #b = (k + alpha - 1) * (k + beta - 1) * (2 * k + alpha + beta) / (2 * k * (k + alpha + beta) * (2 * k + alpha + beta - 2))
-              #support_set.append(torch.matmul(a * support*coeffs[k], support_set[-1]) - b * support_set[-2])
+              a = (2 * k + alpha + beta - 1) * (2 * k + alpha + beta) / (2 * k * (k + alpha + beta))
+              b = (k + alpha - 1) * (k + beta - 1) * (2 * k + alpha + beta) / (2 * k * (k + alpha + beta) * (2 * k + alpha + beta - 2))
+              support_set.append(torch.matmul(a * support*coeffs[k], support_set[-1]) - b * support_set[-2])
             else:
               #Chebyshev
               support_set.append(torch.matmul(2 * support, support_set[-1]) - support_set[-2])
