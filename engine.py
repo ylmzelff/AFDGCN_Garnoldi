@@ -249,7 +249,7 @@ class Engine(object):
        
         y_true = scaler.inverse_transform(torch.cat(y_true, dim=0)).to(args.device)
         if args.real_value:
-            y_pred = torch.cat(y_pred, dim=0).to(args.device).to(args.device)
+            y_pred = torch.cat(y_pred, dim=0).to(args.device)
         else:
             y_pred = scaler.inverse_transform(torch.cat(y_pred, dim=0)).to(args.device)
         print(y_true.cpu().numpy().shape)
