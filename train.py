@@ -151,14 +151,13 @@ def perturb_adjacency_matrix(adj_matrix, perturbation_factor=0.1):
 
 # load dataset
 Adj = get_adjacency_matrix(args.graph_path, args.num_nodes, type='connectivity', id_filename=args.filename_id)
-#A = torch.FloatTensor(A).to(args.device)
+# A = torch.FloatTensor(A).to(args.device)  # Alternative way to create and move to device
 
 #adj_tensor = torch.tensor(Adj, dtype=torch.float32)
 #A = F.softmax(F.relu(torch.mm(adj_tensor, adj_tensor.t())), dim=1)
 #A=F.softmax(F.relu(adj_tensor.t()), dim=1)
 Adj=normalize_adj(Adj)
-A=torch.tensor(Adj, dtype=torch.float32)
-#A=torch.tensor(Adj, dtype=torch.float32).to(torch.device('cpu'))
+A=torch.tensor(Adj, dtype=torch.float32).to(args.device)
 
 train_loader, val_loader, test_loader, scaler = get_dataloader(args,
                                                                normalizer=args.normalizer,
@@ -191,10 +190,10 @@ model = Network(num_node = args.num_nodes,
                 A = A,
                 kernel_size=kernel_size)
 model = model.to(args.device)
-# os.environ['CUDA_VISIBLE_DEVICES'] = '0, 1, 2, 3, 4'
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# if torch.cuda.device_count() > 1:
-#     model = nn.DataParallel(model.cuda(), device_ids=[3, 4])
+os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3,4'
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if torch.cuda.device_count() > 1:
+    model = nn.DataParallel(model.cuda(), device_ids=[0, 1, 2, 3, 4])
 for p in model.parameters():
     if p.dim() > 1:
         nn.init.xavier_uniform_(p)
@@ -256,18 +255,18 @@ if args.mode == 'train':
     trainer.train()
 elif args.mode == 'test':
     checkpoint = "AFDGCN/experiments/PEMS04/garnoldi_pems_best" # en yeni modeli kullan
-    model.load_state_dict(torch.load(checkpoint, map_location=torch.device('cpu')))
+    model.load_state_dict(torch.load(checkpoint, map_location=torch.device('cuda')))
 
-   # model.load_state_dict(torch.load(checkpoint))  # map_location='cuda:5'
+    # model.load_state_dict(torch.load(checkpoint))  # map_location='cuda:5'
     # node_embedding = model.node_embedding
     # adj = F.softmax(F.relu(torch.mm(node_embedding, node_embedding.transpose(0, 1))), dim=1) adj transpose
     # adj = torch.mm(node_embedding, node_embedding.transpose(0, 1))
     # print(adj.shape)
     # np.save('adaptive_matrix.npy', adj.detach().cpu().numpy())
     
-    model.load_state_dict(torch.load(checkpoint))  # map_location='cuda:5'
+    model.load_state_dict(torch.load(checkpoint, map_location=torch.device('cuda')))
     adj_tensor = torch.tensor(Adj, dtype=torch.float32)
-    adj_tensor = adj_tensor.to(torch.device('cpu')) 
+    adj_tensor = adj_tensor.to(torch.device('cuda')) 
     adj = F.softmax(F.relu(torch.mm(adj_tensor, adj_tensor.t())), dim=1)
     print(adj.shape)
     np.save('adaptive_matrix.npy', adj.detach().cpu().numpy())
