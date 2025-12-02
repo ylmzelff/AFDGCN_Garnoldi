@@ -256,8 +256,13 @@ class Engine(object):
         # np.save('./NewNet_{}_true.npy'.format(args.dataset), y_true.cpu().numpy())
         # np.save('./NewNet_{}_pred.npy'.format(args.dataset), y_pred.cpu().numpy())
         print(y_true.shape)
-        df_real_denormalized = pd.DataFrame({'Target': y_true.flatten()})
-        df_results_denormalized = pd.DataFrame({'Output': y_pred.flatten()})
+        
+        # Convert tensors to numpy arrays explicitly
+        y_true_numpy = y_true.detach().cpu().numpy().flatten()
+        y_pred_numpy = y_pred.detach().cpu().numpy().flatten()
+        
+        df_real_denormalized = pd.DataFrame({'Target': y_true_numpy})
+        df_results_denormalized = pd.DataFrame({'Output': y_pred_numpy})
         df_real_denormalized.to_csv('real_flow.csv', index=False)
         df_results_denormalized.to_csv('test_results.csv', index=False)
         for t in range(y_true.shape[1]):
