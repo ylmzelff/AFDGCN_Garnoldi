@@ -66,6 +66,8 @@ def data_loader(X, Y, batch_size, shuffle=True, drop_last=True):
 
 def get_dataloader(args, normalizer = 'std', tod=False, dow=False, weather=False, single=False):
     # 1.加载数据集
+    print(f"DEBUG: args.dataset = '{args.dataset}'")
+    print(f"DEBUG: args.num_nodes = {args.num_nodes}")
     data = load_st_dataset(args.dataset)        # B, N, D
     # 2.数据归一化处理
     data, scaler = normalize_dataset(data, normalizer)

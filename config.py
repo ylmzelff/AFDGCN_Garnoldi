@@ -5,18 +5,18 @@ import configparser
 Mode = 'train'
 DEBUG = 'True'
 #DATASET = 'Kcetas'
-#DATASET = 'PEMS04'
+DATASET = 'PEMS04'
 #DATASET = 'Konya'
 #DATASET = 'Kayseri'
-DATASET = 'Kayseri'
+#DATASET = 'Kayseri'
 DEVICE = 'cuda:0'
 #DEVICE = 'cpu'
 MODEL = 'AFDGCN'
 #GRAPH = "/content/AFDGCN_Garnoldi/data/Kayseri/kayseri_kavsaklar.csv"
-GRAPH = "/content/AFDGCN_Garnoldi/data/Kayseri/generated_graph.csv"
+#GRAPH = "/content/AFDGCN_Garnoldi/data/Kayseri/generated_graph.csv"
 #GRAPH = "/content/AFDGCN_Garnoldi/data/Konya/konya_kavşaklar.csv"
 #GRAPH = "/content/AFDGCN_Garnoldi/data/Kcetas/conn_graph.csv"
-#GRAPH = "./data/PEMS04/PEMS04.csv"
+GRAPH = "./data/PEMS04/PEMS04.csv"
 K = 0.1
 ALGO_OPTIONS = ['default', 'Garnoldi', 'APPNP', 'GPRGNN']
 ALGO = ALGO_OPTIONS[1]
@@ -24,7 +24,7 @@ ALGO = ALGO_OPTIONS[1]
 FILENAME_ID = None
 
 # 1. get configuration
-config_file = '/content/AFDGCN_Garnoldi/conf/Kayseri_Serit_AFDGCN.conf'
+config_file = '/content/AFDGCN_Garnoldi/conf/PEMS04_AFDGCN.conf'
 print(config_file)
 config = configparser.ConfigParser()
 config.read(config_file)
