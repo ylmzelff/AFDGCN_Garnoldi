@@ -652,13 +652,13 @@ class ARNOLDI(MessagePassing):
             if isinstance(edge_index, Tensor):
                 cache = self._cached_edge_index
                 if cache is None:
-                    edge_index, edge_weight = gcn_norm(  # yapf: disable
-                        edge_index, edge_weight, x.size(self.node_dim), False,
-                        self.add_self_loops, self.flow, dtype=x.dtype)
+                    edge_index = read_edge_list_csv(device=x.device)  # ✅ device eklendi
+                    edge_index, edge_weight = gcn_norm(edge_index, edge_weight, num_nodes=(x.size(1)),
+                                                       dtype=x.dtype)
                     if self.cached:
-                        self._cached_edge_index = (edge_index, edge_weight)
+                        self._cached_edge_index = edge_index
                 else:
-                    edge_index, edge_weight = cache[0], cache[1]
+                    edge_index = cache
 
             elif isinstance(edge_index, SparseTensor):
                 cache = self._cached_adj_t
@@ -892,7 +892,7 @@ class AVWGCN(nn.Module):
         node_num = node_embedding.shape[0]
         # 自适应的学习节点间的内s在隐藏关联获取邻接矩阵
         # D^(-1/2)AD^(-1/2)=softmax(ReLU(E * E^T)) - (N, N)
-        coeffs = generateCoeff(11, 'Legendre', 'g_0', False, False, -0.9, 0.9, True)
+        coeffs = generateCoeff(11, 'Chebyshev', 'g_0', False, False, -0.9, 0.9, True)
         support = F.softmax(F.relu(torch.mm(node_embedding, node_embedding.transpose(0, 1))), dim=1)
         if ALGO == 'Garnoldi':
           support = coeffs[0] * support
@@ -904,7 +904,7 @@ class AVWGCN(nn.Module):
             # Z(k) = 2 * L * Z(k-1) - Z(k-2)
             if ALGO == 'Garnoldi':
               #Chebyshev
-              #support_set.append(torch.matmul(2 * coeffs[k] * support, #support_set[-1]) - support_set[-2])
+              support_set.append(torch.matmul(2 * coeffs[k] * support, support_set[-1]) - support_set[-2])
               
               #Monomial
               #support_set.append(torch.matmul(support*coeffs[k], support_set[-1]))
@@ -915,12 +915,12 @@ class AVWGCN(nn.Module):
               #support_set.append(torch.matmul(a * support*coeffs[k], support_set[-1]) - b * support_set[-2])
 
               #Jacobi
-              a = (2 * k + alpha + beta - 1) * (2 * k + alpha + beta) / (2 * k * (k + alpha + beta))
-              b = (k + alpha - 1) * (k + beta - 1) * (2 * k + alpha + beta) / (2 * k * (k + alpha + beta) * (2 * k + alpha + beta - 2))
-              support_set.append(torch.matmul(a * support*coeffs[k], support_set[-1]) - b * support_set[-2])
+              #a = (2 * k + alpha + beta - 1) * (2 * k + alpha + beta) / (2 * k * (k + alpha + beta))
+              #b = (k + alpha - 1) * (k + beta - 1) * (2 * k + alpha + beta) / (2 * k * (k + alpha + beta) * (2 * k + alpha + beta - 2))
+              #support_set.append(torch.matmul(a * support*coeffs[k], support_set[-1]) - b * support_set[-2])
             else:
               #Chebyshev
-              #support_set.append(torch.matmul(2 * support, support_set[-1]) - #support_set[-2])
+              support_set.append(torch.matmul(2 * support, support_set[-1]) - support_set[-2])
               
               #Monomial
               #support_set.append(torch.matmul(support, support_set[-1]))
@@ -931,9 +931,9 @@ class AVWGCN(nn.Module):
               #support_set.append(torch.matmul(a * support, support_set[-1]) - b * support_set[-2])
 
               #Jacobi
-              a = (2 * k + alpha + beta - 1) * (2 * k + alpha + beta) / (2 * k * (k + alpha + beta))
-              b = (k + alpha - 1) * (k + beta - 1) * (2 * k + alpha + beta) / (2 * k * (k + alpha + beta) * (2 * k + alpha + beta - 2))
-              support_set.append(torch.matmul(a * support, support_set[-1]) - b * support_set[-2])
+              #a = (2 * k + alpha + beta - 1) * (2 * k + alpha + beta) / (2 * k * (k + alpha + beta))
+              #b = (k + alpha - 1) * (k + beta - 1) * (2 * k + alpha + beta) / (2 * k * (k + alpha + beta) * (2 * k + alpha + beta - 2))
+              #support_set.append(torch.matmul(a * support, support_set[-1]) - b * support_set[-2])
 
 
         supports = torch.stack(support_set, dim=0) # (K, N, N)
@@ -1010,6 +1010,7 @@ class AVWDCRNN(nn.Module):
     def init_hidden(self, batch_size):
         init_states = []  # 初始化隐藏层
         for i in range(self.num_layers):
+            # Assuming each cell in dcrnnn_cells has an init_hidden_state method
             init_states.append(self.dcrnnn_cells[i].init_hidden_state(batch_size))
         return torch.stack(init_states, dim=0)  # (num_layers, B, N, hidden_dim)
 
@@ -1151,6 +1152,8 @@ class GPR_prop(MessagePassing):
 
     def forward(self, x, edge_index):
         edge_index, norm = gcn_norm(edge_index, num_nodes=x.size(1), dtype=x.dtype)
+        edge_index = edge_index.to(x.device)
+        norm = norm.to(x.device)
         # edge_index, norm = custom_gcn_norm(edge_index, num_nodes=x.size(1), dtype=x.dtype)
         hidden = x * self.temp[0]
         x = x.T
@@ -1174,8 +1177,8 @@ class GPR_prop(MessagePassing):
 class GPRGNN(torch.nn.Module):
     def __init__(self, num_node, input_dim, output_dim, hidden, cheb_k, num_layers, embed_dim):
         super(GPRGNN, self).__init__()
-        self.lin1 = Linear(19648, 64)  # (hidden_dim*num_nodes, hidden_dim) PEMS04: 307*64=19648
-        self.lin2 = Linear(64, 19648)
+        self.lin1 = Linear(2176, 64)  # (hidden_dim*num_nodes, hidden_dim) 19, 1
+        self.lin2 = Linear(64, 2176)
 
         self.prop1 = GPR_prop(cheb_k, 0.5, 'PPR', None)
 
@@ -1192,14 +1195,12 @@ class GPRGNN(torch.nn.Module):
         self.prop1.reset_parameters()
 
     def forward(self, x):
-        edge_index = read_edge_list_csv()
+        device = x.device
+        edge_index = read_edge_list_csv(device)
         x = F.dropout(x, p=self.dropout, training=self.training)
-        x = x.to('cpu')
-        x_reshaped = x.reshape(x.size(0), -1)  # -1 infers the remaining dimension based on the input shape
 
-        # Apply linear layer
+        x_reshaped = x.reshape(x.size(0), -1)
         x = F.relu(self.lin1(x_reshaped))
-        # x = F.relu(self.lin1(x))
         x = F.dropout(x, p=self.dropout, training=self.training)
         x = self.lin2(x)
 
@@ -1210,14 +1211,8 @@ class GPRGNN(torch.nn.Module):
             x = F.dropout(x, p=self.dprate, training=self.training)
             x = self.prop1(x, edge_index)
             x = x.transpose(0, 1)
-
-            # x: (B, T, N, hidden_dim)
-            # Reshape it from (5, 1216) to (5, 1, 19, 64)
-            x = x.view(x.size(0), 1, 307, 64)  # Manually reshape to (B, 1, 307, 64) for PEMS04
-          
-
-            # Apply log softmax along the appropriate dimension
-            x = F.log_softmax(x, dim=3)  # Assuming the last dimension (64) is the one to apply softmax to
+            x = x.view(x.size(0), 1, 34, 64)
+            x = F.log_softmax(x, dim=3)
             return x
 
     def init_hidden(self, batch_size):
@@ -1269,27 +1264,13 @@ class APPNP(MessagePassing):
             if isinstance(edge_index, torch.Tensor):
                 cache = self._cached_edge_index
                 if cache is None:
-                    edge_index = read_edge_list_csv()
-                    # print("Edge index:", edge_index)
-                    # print("Number of nodes:", (int)(x.size(1) / 64))
+                    edge_index = read_edge_list_csv(device=x.device)  # ✅ device eklendi
                     edge_index, edge_weight = gcn_norm(edge_index, edge_weight, num_nodes=(x.size(1)),
                                                        dtype=x.dtype)
-                    # edge_index = torch.tensor([
-                    # [3, 2, 0, 1, 1, 7, 6, 4, 5, 5, 8, 11, 12, 11, 10, 9, 9, 13, 10, 14, 17, 17, 18, 16],
-                    # [2, 1, 1, 6, 7, 4, 5, 8, 8, 11, 12, 12, 9, 10, 9, 13, 14, 14, 17, 18, 18, 16, 15, 15]
-                    # ])
-                    # print("APP Edge index shape:", edge_index.shape)
-                    # print("Edge index content:", edge_index)
-                    # print("Edge weight shape:", edge_weight.shape)
-                    # print("APP Edge weight content:", edge_weight)
                     if self.cached:
                         self._cached_edge_index = edge_index
                 else:
                     edge_index = cache
-                    # edge_index = torch.tensor([
-            # [3, 2, 0, 1, 1, 7, 6, 4, 5, 5, 8, 11, 12, 11, 10, 9, 9, 13, 10, 14, 17, 17, 18, 16],
-            # [2, 1, 1, 6, 7, 4, 5, 8, 8, 11, 12, 12, 9, 10, 9, 13, 14, 14, 17, 18, 18, 16, 15, 15]
-            # ])
 
             elif isinstance(edge_index, SparseTensor):
                 cache = self._cached_adj_t
@@ -1338,8 +1319,8 @@ class APPNP(MessagePassing):
 class APPNP_Net(torch.nn.Module):
     def __init__(self, num_node, input_dim, output_dim, hidden, cheb_k, num_layers, embed_dim):
         super(APPNP_Net, self).__init__()
-        self.lin1 = Linear(19648, 64)  # (512, 64) for Konya & (1216,64) for Kcetas & (19648,64) for PEMS04
-        self.lin2 = Linear(64, 19648)
+        self.lin1 = Linear(2176, 64)  # (512, 64) for Konya & (1216,64) for Kcetas
+        self.lin2 = Linear(64, 2176)
         self.prop1 = APPNP(cheb_k, 0.5, 0.2, False, True, True)
         self.dropout = 0.2
         self.num_layers = num_layers
@@ -1353,13 +1334,12 @@ class APPNP_Net(torch.nn.Module):
         self.lin2.reset_parameters()
 
     def forward(self, x):
-        edge_index = read_edge_list_csv()
+        edge_index = read_edge_list_csv(x.device)
         # edge_index, norm = gcn_norm(edge_index, num_nodes=x.size(1), dtype=x.dtype)
 
         # print(edge_index)
         # print("Initial x:", x)
         x = F.dropout(x, p=self.dropout, training=self.training)
-        x = x.to('cpu')
 
         # Reshape the input
         x_reshaped = x.reshape(x.size(0), -1)  # -1 infers the remaining dimension based on the input shape
@@ -1379,7 +1359,7 @@ class APPNP_Net(torch.nn.Module):
         x = x.transpose(0, 1)
         # Reshape it from (5, 1216) to (5, 1, 19, 64) for Kcetas
         # (5, 1, 8, 64) for Konya
-        x = x.reshape(x.size(0), 1, 307, 64)  # Manually reshape to (B, 1, 307, 64) for PEMS04
+        x = x.reshape(x.size(0), 1, 34, 64)  # Manually reshape to (5, 1, 19, 64)
         # print("After reshaping, x size:", x.size())
 
         # Apply log softmax along the appropriate dimension
@@ -1406,7 +1386,7 @@ class APPNP_Net(torch.nn.Module):
         return torch.stack(init_states, dim=0)
 
 ####################################################################
-def read_edge_list_csv():
+def read_edge_list_csv(device=None):
     # Read the CSV file into a DataFrame
     df = pd.read_csv(GRAPH)
 
@@ -1416,6 +1396,8 @@ def read_edge_list_csv():
 
     # Create the edge index tensor
     edge_index = torch.tensor([edges_from, edges_to], dtype=torch.long)
+    if device is not None:
+        edge_index = edge_index.to(device)
 
     return edge_index
 

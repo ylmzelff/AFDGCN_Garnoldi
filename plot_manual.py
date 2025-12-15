@@ -13,12 +13,12 @@ pred_data_path = r"./test_gar.csv"
 df_pred = pd.read_csv(pred_data_path, skiprows=1, header=None, names=['timestep', 'location', 'flow', 'occupy', 'speed'])
 
 # Define Parameters
-start_date = pd.Timestamp("2025-02-01 00:00")  # Adjusted to reflect test period
+start_date = pd.Timestamp("2025-11-15 00:00")  # Adjusted to reflect test period
 
 # Time interval details
-time_interval = 5  # Time interval in minutes
+time_interval = 10  # Time interval in minutes
 daily_time_steps = int((24 * 60) / time_interval)  # Number of timesteps per day
-test_time_steps = 3397  # Number of test timesteps (~48.42 hours)
+test_time_steps = 402  # Number of test timesteps (~48.42 hours)
 
 # Extract relevant test data
 df_pred_location = df_pred[df_pred['location'] == 0].iloc[-test_time_steps:]
@@ -29,11 +29,15 @@ time_steps_pred = [start_date + pd.Timedelta(minutes=time_interval * i) for i in
 time_steps_real = [start_date + pd.Timedelta(minutes=time_interval * i) for i in range(len(df_real_period))]
 
 # Define zoom range based on date and hour
-zoom_start_date = pd.Timestamp("2025-02-08 08:00")  # Day 9 start
-zoom_end_date = pd.Timestamp("2025-02-11 00:00")    # Day 11 start
+zoom_start_date = pd.Timestamp("2025-11-15 02:00")  # Modify this
+zoom_end_date = pd.Timestamp("2025-11-15 12:00")    # Modify this
 
-zoom_start = next(i for i, t in enumerate(time_steps_real) if t >= zoom_start_date)
-zoom_end = next(i for i, t in enumerate(time_steps_real) if t >= zoom_end_date)
+zoom_start = next((i for i, t in enumerate(time_steps_real) if t >= zoom_start_date), 0)
+zoom_end = next((i for i, t in enumerate(time_steps_real) if t >= zoom_end_date), len(time_steps_real) - 1)
+
+# Ensure zoom_end is greater than zoom_start
+if zoom_end <= zoom_start:
+    zoom_end = min(zoom_start + 60, len(time_steps_real) - 1)  # Default to 60 timesteps (10 hours)
 
 # Plot
 fig, ax = plt.subplots(figsize=(14, 8))
@@ -63,7 +67,14 @@ axins = ax.inset_axes([0.5, 0.5, 0.65, 0.6])
 axins.plot(time_steps_real, df_real_period['flow'], label="Real Traffic Flow", color="blue")
 axins.plot(time_steps_pred, df_pred_location['flow'], label="Predicted Traffic Flow", color="orange", linestyle="--")
 axins.set_xlim(time_steps_real[zoom_start], time_steps_real[zoom_end])
-axins.set_ylim(min(df_real_period['flow'][zoom_start:zoom_end]) - 5, max(df_real_period['flow'][zoom_start:zoom_end]) + 5)
+
+# Safe min/max calculation with fallback
+zoom_data = df_real_period['flow'].iloc[zoom_start:zoom_end]
+if len(zoom_data) > 0:
+    axins.set_ylim(zoom_data.min() - 5, zoom_data.max() + 5)
+else:
+    axins.set_ylim(df_real_period['flow'].min() - 5, df_real_period['flow'].max() + 5)
+
 axins.grid()
 #axins.xaxis.set_major_formatter(FuncFormatter(custom_date_format))
 axins.set_xticklabels([])
