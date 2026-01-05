@@ -386,14 +386,29 @@ def preprocess_excel_and_generate_npz_ui(excel_file):
 
         all_dfs = []
         location_offset = 0
+        sheet_info = []  # Debug bilgisi için
+        
         for sheet in sheet_names:
             df = pd.read_excel(xls, sheet_name=sheet, skiprows=2)
             candidate_cols = [col for col in df.columns if col not in ["Tarih", "Saat", "Toplam"]]
+            
+            # Tüm candidate sütunları numerik'e çevirmeyi dene
+            for col in candidate_cols:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+            
             df_numeric = df[candidate_cols].select_dtypes(include='number')
 
             if df_numeric.empty:
+                sheet_info.append(f"❌ {sheet}: No numeric columns")
                 continue
 
+            num_cols = len(df_numeric.columns)
+            col_names = ', '.join([f'"{col}"' for col in df_numeric.columns[:6]])  # İlk 6 sütun adı
+            if len(df_numeric.columns) > 6:
+                col_names += f", ... ({len(df_numeric.columns)} total)"
+            sheet_info.append(f"✅ {sheet}: {num_cols} columns (locations {location_offset} to {location_offset + num_cols - 1})")
+            sheet_info.append(f"   Columns: {col_names}")
+            
             df['TarihSaat'] = pd.to_datetime(df['Tarih'].astype(str) + ' ' + df['Saat'].astype(str), errors='coerce')
             rows = []
             for _, row in df.iterrows():
@@ -434,7 +449,13 @@ def preprocess_excel_and_generate_npz_ui(excel_file):
             data[ts, loc] = [row['flow'], row['occupy'], row['speed']]
         np.savez(npz_path, data=data)
 
-        return "Preprocessing completed successfully! Files are ready for download.", gr.File(value=csv_path, visible=True), gr.File(value=npz_path, visible=True), gr.update(visible=True), gr.update(visible=True)
+        # Detaylı bilgi mesajı
+        info_msg = f"✅ Preprocessing completed!\n\n📊 Sheet Details:\n" + "\n".join(sheet_info)
+        info_msg += f"\n\n📈 Total Locations: {locations} (0 to {locations-1})"
+        info_msg += f"\n⏱️ Total Timesteps: {timesteps}"
+        info_msg += f"\n💾 Data shape: ({timesteps}, {locations}, 3)"
+        
+        return info_msg, gr.File(value=csv_path, visible=True), gr.File(value=npz_path, visible=True), gr.update(visible=True), gr.update(visible=True)
     except Exception as e:
         import traceback
         return f"❌ An error occurred during preprocessing:\n{traceback.format_exc()}", gr.File(value=None, visible=False), gr.File(value=None, visible=False), gr.update(visible=False), gr.update(visible=False)
@@ -1027,7 +1048,7 @@ button[aria-selected="true"]:hover {
 """
 
 # Gradio Interface Definition
-with gr.Blocks(title="SmartTech AI Platform") as demo:
+with gr.Blocks(title="SmartTech AI Platform", css=css_styles) as demo:
     # 1. Header Section
     gr.HTML(header_html)
 
@@ -1222,6 +1243,5 @@ with gr.Blocks(title="SmartTech AI Platform") as demo:
 
 # Launch the independent Gradio interface
 demo.launch(
-    css=css_styles,
     allowed_paths=[str(BASE_DIR), str(BASE_DIR.parent)]
 )
