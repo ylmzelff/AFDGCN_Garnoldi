@@ -176,6 +176,21 @@ def update_dashboard(kavsak, tarih, saat, kol, data_type="karlı gün verisi(şu
     diff = abs(real_v - pred_v)
     acc = 100 - (diff / max(real_v, 1) * 100) if real_v > 0 else 100
 
+    # Geliştirilmiş Güven Skoru Sistemi
+    if acc >= 85:
+        confidence_label = "TAM UYUMLU"
+        confidence_detail = f"Yüksek Güven (%{acc:.0f})"
+        confidence_color = "#16a085"  # Yeşil
+    elif acc >= 70:
+        confidence_label = "YÜKSEK GÜVEN" 
+        confidence_detail = f"Kararlı Analiz (%{acc:.0f})"
+        confidence_color = "#3498db"  # Mavi
+    else:
+        confidence_label = "DİNAMİK TRAFİK"
+        confidence_detail = f"Değişken Akış (%{acc:.0f})"
+        confidence_color = "#f39c12"  # Turuncu
+        
+
     arm_labels = [a.split(" - ")[0] for a in v_arms]
     rc, pc = [], []
     for a in v_arms:
@@ -190,7 +205,14 @@ def update_dashboard(kavsak, tarih, saat, kol, data_type="karlı gün verisi(şu
     def card(label, val, color="#0f172a"):
         return f"<div style='background:#fff; border-radius:10px; padding:15px; border:1px solid #e2e8f0; text-align:center;'><div style='font-size:11px; color:#64748b; font-weight:bold;'>{label}</div><div style='font-size:24px; font-weight:800; color:{color};'>{val}</div></div>"
 
-    return card("GERÇEK ARAÇ", real_v), card("AI TAHMİN", pred_v, "#3498db"), card("DOĞRULUK", f"%{acc:.1f}", "#16a085"), card("FARK", diff, "#dc2626"), fig, gr.update(choices=v_arms, value=kol)
+    def confidence_card(main_label, detail_text, color):
+        return f"""<div style='background:#fff; border-radius:10px; padding:15px; border:1px solid #e2e8f0; text-align:center;'>
+                     <div style='font-size:11px; color:#64748b; font-weight:bold;'>SİSTEM KARARLILIĞI</div>
+                     <div style='font-size:20px; font-weight:800; color:{color}; margin:5px 0;'>{main_label}</div>
+                     <div style='font-size:10px; color:#94a3b8; font-weight:500;'>{detail_text}</div>
+                   </div>"""
+
+    return card("GERÇEK ARAÇ", real_v), card("AI TAHMİN", pred_v, "#3498db"), confidence_card(confidence_label, confidence_detail, confidence_color), card("FARK", diff, "#dc2626"), fig, gr.update(choices=v_arms, value=kol)
 
 def handle_map_selection(kavsak):
     choices = ANALYSIS_INTERSECTIONS.get(kavsak, [])
@@ -212,6 +234,49 @@ def update_dates_by_data_type(data_type, kavsak):
         dates = DATES_ILDEM.get(data_type, DATES_ILDEM["karlı gün verisi(şubat)"])
         return gr.update(choices=dates, value=dates[0] if dates else None)
     return gr.update()
+
+def navigate_to_traffic_light_suggestion(kavsak, kol, saat):
+    """Traffic Analysis'den Traffic Light Suggestion'a yönlendirme fonksiyonu"""
+    # Kavşak eşleştirmesi (Analysis -> Traffic Light format)
+    intersection_mapping = {
+        "Emrah": "Gesi",  # En yakın eşleşme
+        "Farabi": "Gesi", 
+        "Yahya Kemal": "Gesi",
+        "İldem 1": "İldem 1",
+        "İldem 2": "İldem 2", 
+        "İldem 3": "İldem 3",
+        "İldem 4": "İldem 4",
+        "İldem 5": "İldem 5",
+        "Serkent": "Serkent",
+        "Beyazşehir": "Beyazşehir",
+        "Toki": "Toki"
+    }
+    
+    mapped_intersection = intersection_mapping.get(kavsak, "Gesi")
+    
+    # Kol formatını düzenle (sadece harf kısmını al)
+    arm_letter = kol.split(" - ")[0] if " - " in kol else kol[:1]
+    
+    # INTERSECTIONS sözlüğünden uygun kolu bul
+    available_arms = list(INTERSECTIONS.get(mapped_intersection, {}).keys())
+    matched_arm = None
+    
+    for arm in available_arms:
+        if arm.startswith(arm_letter):
+            matched_arm = arm
+            break
+    
+    if not matched_arm and available_arms:
+        matched_arm = available_arms[0]
+    
+    return (
+        gr.update(value=mapped_intersection),  # intersection dropdown
+        gr.update(choices=available_arms, value=matched_arm),  # arm dropdown  
+        gr.update(value=int(saat)),  # hour dropdown
+        f"✅ {kavsak} kavşağı {kol} kolu için saat {saat}:00'da trafik ışığı önerisi alınmaya hazır. Lütfen aşağıdaki 'CALCULATE SUGGESTION' butonuna tıklayın."
+    )
+
+# Navigate to traffic light suggestion fonksiyonu artık inline tanımlandı
 
 
 # === UPDATED: Helper Function: Generate Traffic Light Visualization HTML (CARD STYLE) ===
@@ -684,7 +749,7 @@ input[type=range] { --range-active: #8e44ad !important; --range-thumb: #8e44ad !
 """
 
 # Gradio Interface Definition
-with gr.Blocks(title="SmartTech AI Platform", css=css_styles) as demo:
+with gr.Blocks(title="SmartTech AI Platform") as demo:
     # 1. Header Section
     gr.HTML(header_html)
 
@@ -784,6 +849,13 @@ with gr.Blocks(title="SmartTech AI Platform", css=css_styles) as demo:
                             )
                             
                             c_in = gr.Dropdown(choices=ANALYSIS_INTERSECTIONS["Farabi"], label="İncelenen Kol", value=ANALYSIS_INTERSECTIONS["Farabi"][0], allow_custom_value=True)
+                            
+                            # Trafik Işığı Önerisi Butonu
+                            traffic_light_btn = gr.Button(
+                                "🚦 TRAFİK FAZ ÖNERİSİ ALMAK İÇİN TIKLAYIN", 
+                                elem_classes="train-model-button",
+                                size="lg"
+                            )
 
                     with gr.Column(scale=3):
                         with gr.Row():
@@ -801,6 +873,155 @@ with gr.Blocks(title="SmartTech AI Platform", css=css_styles) as demo:
                 outs = [res1, res2, res3, res4, plot_out_analysis, c_in]
                 for i in ins:
                     i.change(update_dashboard, ins, outs)
+                    
+                # Trafik Işığı Önerisi buton eventi - JavaScript ile tab switching
+                def create_traffic_light_js():
+                    """Gradio 6.0 uyumlu JavaScript kodu - güncel parametreleri garanti eder"""
+                    return """
+                    () => {
+                        console.log('🚦 Traffic Light butonuna tıklandı - parametreler alınıyor...');
+                        
+                        // Mevcut parametreleri DOM'dan güvenilir şekilde al
+                        let kavsak = 'Farabi';
+                        let kol = 'A';
+                        let saat = 14;
+                        
+                        // 1. Kavşak değerini al (map_trigger'dan)
+                        const kavsakInput = document.querySelector('#map_trigger textarea');
+                        if(kavsakInput && kavsakInput.value) {
+                            kavsak = kavsakInput.value.trim();
+                        }
+                        console.log('📍 Kavşak:', kavsak);
+                        
+                        // 2. Kol değerini al - Traffic Analysis sekmesindeki aktif dropdown'dan
+                        const allSelects = document.querySelectorAll('select');
+                        for(let i = allSelects.length - 1; i >= 0; i--) {
+                            const selectValue = allSelects[i].value;
+                            if(selectValue && selectValue.includes(' - ') && selectValue.match(/^[A-D] - /)) {
+                                kol = selectValue.split(' - ')[0];
+                                console.log('🔄 Kol bulundu:', kol, 'from:', selectValue);
+                                break;
+                            }
+                        }
+                        
+                        // 3. Saat değerini al - slider'dan
+                        const saatSlider = document.querySelector('input[type="range"]');
+                        if(saatSlider && saatSlider.value) {
+                            saat = parseInt(saatSlider.value);
+                        }
+                        console.log('⏰ Saat:', saat);
+                        
+                        // Kavşak eşleştirmesi
+                        const intersectionMapping = {
+                            "Emrah": "Gesi", "Farabi": "Gesi", "Yahya Kemal": "Gesi",
+                            "İldem 1": "İldem 1", "İldem 2": "İldem 2", "İldem 3": "İldem 3",
+                            "İldem 4": "İldem 4", "İldem 5": "İldem 5", "Serkent": "Serkent",
+                            "Beyazşehir": "Beyazşehir", "Toki": "Toki"
+                        };
+                        
+                        const mappedIntersection = intersectionMapping[kavsak] || "Gesi";
+                        console.log('🗺️ Mapped intersection:', mappedIntersection);
+                        
+                        // Tab'ı değiştir (Traffic Light Suggestion = 5. tab, index 4)
+                        const tabs = document.querySelectorAll('button[role="tab"]');
+                        if (tabs[4]) {
+                            console.log('📑 Tab değiştiriliyor...');
+                            tabs[4].click();
+                        }
+                        
+                        // Parametreleri form alanlarına doldur - sıralı işlem
+                        setTimeout(() => {
+                            console.log('🔄 Form alanları doldurulmaya başlanıyor...');
+                            
+                            // ADIM 1: Intersection Dropdown'ı seç
+                            const newDropdowns = document.querySelectorAll('select');
+                            let intersectionDropdown = null;
+                            
+                            for(let dropdown of newDropdowns) {
+                                const options = Array.from(dropdown.options).map(opt => opt.value);
+                                if(options.includes('Gesi') || options.includes('İldem 1')) {
+                                    intersectionDropdown = dropdown;
+                                    dropdown.value = mappedIntersection;
+                                    dropdown.dispatchEvent(new Event('change', { bubbles: true }));
+                                    console.log('✅ Intersection seçildi:', mappedIntersection);
+                                    break;
+                                }
+                            }
+                            
+                            // ADIM 2: ARM dropdown populate olmasını bekle ve seç
+                            setTimeout(() => {
+                                console.log('🔧 ARM dropdown kontrol ediliyor...');
+                                const updatedDropdowns = document.querySelectorAll('select');
+                                let armDropdown = null;
+                                let hourDropdown = null;
+                                
+                                for(let dropdown of updatedDropdowns) {
+                                    const options = Array.from(dropdown.options).map(opt => opt.value);
+                                    
+                                    // ARM dropdown - kol harfiyle eşleşen ilk seçeneği bul
+                                    if(!armDropdown && options.some(opt => opt.includes(' - '))) {
+                                        // Kol harfiyle başlayan ARM'ı bul
+                                        const matchedArm = options.find(opt => 
+                                            opt.includes(' - ') && opt.startsWith(kol + ' -')
+                                        );
+                                        
+                                        if(matchedArm) {
+                                            armDropdown = dropdown;
+                                            dropdown.value = matchedArm;
+                                            dropdown.dispatchEvent(new Event('change', { bubbles: true }));
+                                            console.log('✅ ARM seçildi:', matchedArm);
+                                        } else {
+                                            // Eşleşme yoksa ilk ARM'ı seç
+                                            const firstArm = options.find(opt => opt.includes(' - '));
+                                            if(firstArm) {
+                                                armDropdown = dropdown;
+                                                dropdown.value = firstArm;
+                                                dropdown.dispatchEvent(new Event('change', { bubbles: true }));
+                                                console.log('⚠️ Varsayılan ARM seçildi:', firstArm);
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Hour dropdown
+                                    else if(!hourDropdown && (options.includes('7') || options.includes('14') || options.includes('17'))) {
+                                        hourDropdown = dropdown;
+                                        dropdown.value = saat.toString();
+                                        dropdown.dispatchEvent(new Event('change', { bubbles: true }));
+                                        console.log('✅ Hour seçildi:', saat);
+                                    }
+                                }
+                                
+                                // ADIM 3: Status mesajını güncelle
+                                setTimeout(() => {
+                                    const statusBoxes = document.querySelectorAll('textarea');
+                                    for(let box of statusBoxes) {
+                                        if(box.value && box.value.includes('Select intersection')) {
+                                            const selectedArm = armDropdown ? armDropdown.value.split(' - ')[0] : kol;
+                                            box.value = `✅ ${kavsak} kavşağı ${selectedArm} kolu için saat ${saat}:00 parametreleri YÜKLENDİ! ↓ CALCULATE SUGGESTION butonuna tıklayın.`;
+                                            box.dispatchEvent(new Event('input', { bubbles: true }));
+                                            console.log('✅ Status güncellendi');
+                                            break;
+                                        }
+                                    }
+                                    
+                                    console.log('🎯 Tüm parametreler başarıyla yüklendi!');
+                                }, 100);
+                                
+                            }, 600); // ARM populate olması için yeterli süre
+                            
+                        }, 300);
+                        
+                        return `🚦 ${kavsak} kavşağı ${kol} kolu saat ${saat}:00 → Traffic Light Suggestion!`;
+                    }
+                    """
+                
+                # JavaScript-only event (Gradio 6.0 uyumlu - inputs yok)
+                traffic_light_btn.click(
+                    fn=None,
+                    inputs=[],
+                    outputs=[],
+                    js=create_traffic_light_js()
+                )
 
                 # Sayfa yüklendiğinde ilk durumu çalıştır (analiz sekmesi için)
                 # Not: Gradio'da load eventi tüm app için çalışır, butonla tetiklemek daha güvenli olabilir ama burada load kullanıyoruz.
@@ -854,7 +1075,7 @@ with gr.Blocks(title="SmartTech AI Platform", css=css_styles) as demo:
     gr.HTML(footer_html)
 
 # Launch
-demo.launch(allowed_paths=[str(BASE_DIR), str(BASE_DIR.parent)], share=True, debug=True)
+demo.launch(allowed_paths=[str(BASE_DIR), str(BASE_DIR.parent)], share=True, debug=True, css=css_styles)
 
 # Colab'da sürekli çalışması için sonsuz döngü
 import time
