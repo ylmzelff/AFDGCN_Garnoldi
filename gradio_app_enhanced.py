@@ -10,12 +10,12 @@ import tempfile
 import plotly.graph_objects as go
 import folium
 import warnings
+import time  # <-- eksikti, eklendi
 
-# Gereksiz uyarıları sessize al
 warnings.filterwarnings('ignore', category=FutureWarning)
 
 # === Paths ===
-BASE_DIR = Path("/content/AFDGCN_Garnoldi")
+BASE_DIR = Path().absolute()  # Current directory
 DATA_DIR = BASE_DIR / "data" / "Kayseri"
 CONFIG_PY = BASE_DIR / "config.py"
 LOAD_DATASET = BASE_DIR / "lib" / "load_dataset.py"
@@ -37,9 +37,8 @@ KAYSERI_ULASIM_LOGO_PATH = BASE_DIR / "kayseri_ulaşım.png"
 SMARTTECH_LOGO_PATH = BASE_DIR / "smarttecl_logo.png"
 
 # ==========================================
-# 1. ANALYSIS.PY MANTIĞI VE VERİLERİ
+# 1) ANALYSIS.PY MANTIĞI VE VERİLERİ (AYNEN)
 # ==========================================
-
 ANALYSIS_INTERSECTIONS = {
     "Emrah": ["A - EMRAH CAD. KUZEY", "B - KIZILIRMAK CAD DOĞU", "C - EMRAH CAD GÜNEY", "D - KIZILIRMAK CAD BATI"],
     "Farabi": ["A - FARABİ CAD KUZEY", "B - KIZILIRMAK CAD DOĞU", "C - FARABİ CAD GÜNEY", "D - KIZILIRMAK CAD BATI"],
@@ -58,7 +57,7 @@ DATES_KIZILIRMAK = ["28.10.2025", "29.10.2025", "30.10.2025", "31.10.2025"]
 DATES_ILDEM = {
     "karlı gün verisi(şubat)": ["23.02.2025", "24.02.2025", "25.02.2025", "26.02.2025", "27.02.2025", "28.02.2025"],
     "karlı gün verisi(ocak)": ["17.01.2026", "18.01.2026", "19.01.2026", "20.01.2026", "21.01.2026", "22.01.2026", "23.01.2026"],
-    "normal veri(kasım)": ["26.10.2025", "27.10.2025", "28.10.2025"]
+    "normal veri(kasım)": ["26.11.2025", "27.11.2025", "28.11.2025"]
 }
 KIZILIRMAK_LIST = ["Emrah", "Farabi", "Yahya Kemal"]
 
@@ -69,7 +68,7 @@ ANALYSIS_COORDS = {
     "Beyazşehir": [38.760, 35.560], "Toki": [38.775, 35.580]
 }
 
-# --- Ana Uygulama (Plot Tab) İçin Eski Dictionary ---
+# Plot tab için eski dictionary
 INTERSECTIONS = {
     "Gesi": {"A - SİVAS BULVARI-SİVAS YÖNÜ": 0, "B - GESİ CAD.": 1, "C - SİVAS BULV - ŞEHİR MERKEZİ": 2, "D - 381. SOKAK": 3},
     "Serkent": {"A - 822. SK": 4, "B - GESİ CAD. DOĞU": 5, "C - KOCASİNAN CAD.": 6, "D - GESİ CAD. BATI": 7},
@@ -82,8 +81,7 @@ INTERSECTIONS = {
     "İldem 5": {"A - S.A BEDUK CAD. KUZEY": 30, "B - VATAN SOKAK BATI": 31, "C - S.A BEDUK CAD. GÜNEY": 32, "D - VATAN SOKAK DOĞU": 33}
 }
 
-
-# --- Logo Helper Function ---
+# --- Logo helper ---
 def get_base64_image_tag(image_path: Path, max_height: int = 90) -> str:
     if not image_path.exists():
         print(f"Warning: Image not found at {image_path}")
@@ -97,76 +95,95 @@ def get_base64_image_tag(image_path: Path, max_height: int = 90) -> str:
         img_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
         return f"data:image/png;base64,{img_b64}"
 
-
 # ==========================================
-# 3. ANALYSIS.PY FONKSİYONLARI
+# 2) VERİ HESAPLAMA (İLK KODLA BİREBİR)
 # ==========================================
-
 def get_kizilirmak_counts(kavsak, kol_full, tarih, saat):
-    KIZILIRMAK_REAL = "/content/AFDGCN_Garnoldi/kizilirmak_gerçek.xlsx"
-    KIZILIRMAK_PRED = "/content/AFDGCN_Garnoldi/kizilirmak_tahmin.xlsx"
+    # dosya isimleri birebir
+    KIZILIRMAK_REAL = str(BASE_DIR / "kizilirmak_gerçek.xlsx")
+    KIZILIRMAK_PRED = str(BASE_DIR / "kizilirmak_tahmin.xlsx")
     try:
         harf = kol_full.split(" - ")[0]
         col_idx = {"A": 3, "B": 4, "C": 5, "D": 6}.get(harf, 3)
-        d, m, y = tarih.split('.')
+        d, m, y = tarih.split(".")
         h_prefix = f"{int(saat):02d}:"
 
         xl_real = pd.ExcelFile(KIZILIRMAK_REAL)
         target_sheet = next((s for s in xl_real.sheet_names if kavsak.strip().lower() in s.strip().lower()), None)
         df_real = pd.read_excel(KIZILIRMAK_REAL, sheet_name=target_sheet, header=None, dtype=object)
-        mask_r = df_real.apply(lambda r: (str(y) in str(r.iloc[1]) and str(m) in str(r.iloc[1]) and str(d) in str(r.iloc[1])) and (h_prefix in str(r.iloc[2])), axis=1)
-        v_real = int(pd.to_numeric(df_real[mask_r].iloc[:, col_idx], errors='coerce').fillna(0).sum())
+        mask_r = df_real.apply(
+            lambda r: (str(y) in str(r.iloc[1]) and str(m) in str(r.iloc[1]) and str(d) in str(r.iloc[1]))
+                      and (h_prefix in str(r.iloc[2])),
+            axis=1
+        )
+        v_real = int(pd.to_numeric(df_real[mask_r].iloc[:, col_idx], errors="coerce").fillna(0).sum())
 
         xl_pred = pd.ExcelFile(KIZILIRMAK_PRED)
         df_pred = pd.read_excel(KIZILIRMAK_PRED, sheet_name=target_sheet, header=None, dtype=object)
-        mask_p = df_pred.apply(lambda r: (str(y) in str(r.iloc[1]) and str(m) in str(r.iloc[1]) and str(d) in str(r.iloc[1])) and (h_prefix in str(r.iloc[2])), axis=1)
-        v_pred = int(pd.to_numeric(df_pred[mask_p].iloc[:, col_idx], errors='coerce').fillna(0).sum())
+        mask_p = df_pred.apply(
+            lambda r: (str(y) in str(r.iloc[1]) and str(m) in str(r.iloc[1]) and str(d) in str(r.iloc[1]))
+                      and (h_prefix in str(r.iloc[2])),
+            axis=1
+        )
+        v_pred = int(pd.to_numeric(df_pred[mask_p].iloc[:, col_idx], errors="coerce").fillna(0).sum())
 
         return v_real, v_pred
-    except: return 0, 0
+    except:
+        return 0, 0
 
 def get_ildem_counts(kavsak, kol, tarih, saat, data_type="karlı gün verisi(şubat)"):
+    # dosya isimleri birebir
     file_mapping = {
-        "karlı gün verisi(şubat)": ("/content/AFDGCN_Garnoldi/şubat_gerçek.xlsx", "/content/AFDGCN_Garnoldi/şubat_tahmin.xlsx"),
-        "karlı gün verisi(ocak)": ("/content/AFDGCN_Garnoldi/ocak_gerçek.xlsx", "/content/AFDGCN_Garnoldi/ocak_tahmin.xlsx"),
-        "normal veri(kasım)": ("/content/AFDGCN_Garnoldi/kasım_gerçek.xlsx", "/content/AFDGCN_Garnoldi/kasım_tahmin.xlsx")
+        "karlı gün verisi(şubat)": (str(BASE_DIR / "şubat_gerçek.xlsx"), str(BASE_DIR / "şubat_tahmin.xlsx")),
+        "karlı gün verisi(ocak)": (str(BASE_DIR / "ocak_gerçek.xlsx"), str(BASE_DIR / "ocak_tahmin.xlsx")),
+        "normal veri(kasım)": (str("/content/AFDGCN_Garnoldi/kasım_gerçek.xlsx"), str("/content/AFDGCN_Garnoldi/kasım_tahmin.xlsx"))
     }
-    
+
     ILDEM_REAL, ILDEM_PRED = file_mapping.get(data_type, file_mapping["karlı gün verisi(şubat)"])
     h_prefix = f"{int(saat):02d}:"
     try:
         df_real = pd.read_excel(ILDEM_REAL, sheet_name=kavsak, header=2).copy()
         df_real.columns = [str(c).strip() for c in df_real.columns]
-        df_real.iloc[:, 0] = pd.to_datetime(df_real.iloc[:, 0], errors='coerce').dt.strftime('%d.%m.%Y')
+        df_real.iloc[:, 0] = pd.to_datetime(df_real.iloc[:, 0], errors="coerce").dt.strftime("%d.%m.%Y")
         r_mask = (df_real.iloc[:, 0] == tarih) & (df_real.iloc[:, 1].astype(str).str.startswith(h_prefix))
-        v_real = int(pd.to_numeric(df_real[r_mask][kol], errors='coerce').fillna(0).sum())
+        v_real = int(pd.to_numeric(df_real[r_mask][kol], errors="coerce").fillna(0).sum())
 
         df_pred = pd.read_excel(ILDEM_PRED, sheet_name=kavsak, header=2).copy()
         df_pred.columns = [str(c).strip() for c in df_pred.columns]
         p_mask = (df_pred.iloc[:, 0] == tarih) & (df_pred.iloc[:, 1].astype(str).str.startswith(h_prefix))
-        v_pred = int(pd.to_numeric(df_pred[p_mask][kol], errors='coerce').fillna(0).sum())
+        v_pred = int(pd.to_numeric(df_pred[p_mask][kol], errors="coerce").fillna(0).sum())
         return v_real, v_pred
-    except: return 0, 0
+    except:
+        return 0, 0
 
+# ==========================================
+# 3) TRAFFIC ANALYSIS UI HELPERS
+# ==========================================
 def create_map():
     m = folium.Map(location=[38.745, 35.54], zoom_start=12, tiles="cartodbpositron")
     for name, coords in ANALYSIS_COORDS.items():
         color = "#16a085" if name in KIZILIRMAK_LIST else "#3498db"
         html = f"""<div style="font-family:sans-serif; min-width:140px;"><b style="color:{color};">{name} Kavşağı</b><br>
         <button onclick="const trigger = window.parent.document.querySelector('#map_trigger textarea'); trigger.value = '{name}'; trigger.dispatchEvent(new Event('input', {{ bubbles: true }}));"
-        style="background:{color}; color:white; border:none; padding:8px; border-radius:4px; cursor:pointer; width:100%; margin-top:8px; font-weight:bold;">ANALİZİ YÜKLE</button></div>"""
-        folium.CircleMarker(location=coords, radius=10, color=color, fill=True, popup=folium.Popup(html, max_width=200)).add_to(m)
+        style="background:{color}; color:white; border:none; padding:8px; border-radius:4px; cursor:pointer; width:100%; margin-top:8px; font-weight:bold;">SEÇ</button></div>"""
+        folium.CircleMarker(
+            location=coords, radius=10, color=color, fill=True,
+            popup=folium.Popup(html, max_width=200)
+        ).add_to(m)
     return m._repr_html_()
 
 def update_dashboard(kavsak, tarih, saat, kol, data_type="karlı gün verisi(şubat)"):
-    if not kavsak: kavsak = "Farabi"
+    if not kavsak:
+        kavsak = "Farabi"
     v_arms = ANALYSIS_INTERSECTIONS.get(kavsak, [])
 
     is_kizilirmak = kavsak in KIZILIRMAK_LIST
     current_dates = DATES_KIZILIRMAK if is_kizilirmak else DATES_ILDEM.get(data_type, DATES_ILDEM["karlı gün verisi(şubat)"])
 
-    if tarih not in current_dates: tarih = current_dates[0]
-    if kol not in v_arms: kol = v_arms[0]
+    if tarih not in current_dates:
+        tarih = current_dates[0]
+    if v_arms and (kol not in v_arms):
+        kol = v_arms[0]
 
     if is_kizilirmak:
         real_v, pred_v = get_kizilirmak_counts(kavsak, kol, tarih, saat)
@@ -176,20 +193,15 @@ def update_dashboard(kavsak, tarih, saat, kol, data_type="karlı gün verisi(şu
     diff = abs(real_v - pred_v)
     acc = 100 - (diff / max(real_v, 1) * 100) if real_v > 0 else 100
 
-    # Geliştirilmiş Güven Skoru Sistemi
     if acc >= 85:
         confidence_label = "TAM UYUMLU"
-        confidence_detail = f"Yüksek Güven (%{acc:.0f})"
-        confidence_color = "#16a085"  # Yeşil
+        confidence_color = "#16a085"
     elif acc >= 70:
-        confidence_label = "YÜKSEK GÜVEN" 
-        confidence_detail = f"Kararlı Analiz (%{acc:.0f})"
-        confidence_color = "#3498db"  # Mavi
+        confidence_label = "YÜKSEK GÜVEN"
+        confidence_color = "#3498db"
     else:
         confidence_label = "DİNAMİK TRAFİK"
-        confidence_detail = f"Değişken Akış (%{acc:.0f})"
-        confidence_color = "#f39c12"  # Turuncu
-        
+        confidence_color = "#f39c12"
 
     arm_labels = [a.split(" - ")[0] for a in v_arms]
     rc, pc = [], []
@@ -198,36 +210,57 @@ def update_dashboard(kavsak, tarih, saat, kol, data_type="karlı gün verisi(şu
         rc.append(rv); pc.append(pv)
 
     fig = go.Figure()
-    fig.add_trace(go.Bar(x=arm_labels, y=rc, name='Gerçek', marker_color='#16a085'))
-    fig.add_trace(go.Bar(x=arm_labels, y=pc, name='Tahmin', marker_color='#3498db'))
-    fig.update_layout(barmode='group', height=400, template='plotly_white', margin=dict(l=20, r=20, t=20, b=20), legend=dict(orientation="h", y=1.1, x=0.5, xanchor="center"))
+    fig.add_trace(go.Bar(x=arm_labels, y=rc, name="Gerçek", marker_color="#334155"))
+    fig.add_trace(go.Bar(x=arm_labels, y=pc, name="Tahmin", marker_color="#94a3b8"))
+    fig.update_layout(
+        barmode="group",
+        height=350,
+        template="plotly_white",
+        margin=dict(l=20, r=20, t=10, b=10),
+        legend=dict(orientation="h", y=1.1, x=0.5, xanchor="center")
+    )
 
     def card(label, val, color="#0f172a"):
-        return f"<div style='background:#fff; border-radius:10px; padding:15px; border:1px solid #e2e8f0; text-align:center;'><div style='font-size:11px; color:#64748b; font-weight:bold;'>{label}</div><div style='font-size:24px; font-weight:800; color:{color};'>{val}</div></div>"
+        return f"""
+        <div style='background:#fff; border-radius:4px; border:1px solid #e2e8f0; display:flex; flex-direction:column; justify-content:center; align-items:center; height:100px; width:100%;'>
+            <div style='font-size:11px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:1px;'>{label}</div>
+            <div style='font-size:32px; font-weight:700; color:{color}; margin-top:5px;'>{val}</div>
+        </div>"""
 
-    def confidence_card(main_label, detail_text, color):
-        return f"""<div style='background:#fff; border-radius:10px; padding:15px; border:1px solid #e2e8f0; text-align:center;'>
-                     <div style='font-size:11px; color:#64748b; font-weight:bold;'>SİSTEM KARARLILIĞI</div>
-                     <div style='font-size:20px; font-weight:800; color:{color}; margin:5px 0;'>{main_label}</div>
-                     <div style='font-size:10px; color:#94a3b8; font-weight:500;'>{detail_text}</div>
-                   </div>"""
+    def confidence_card(main_label, color):
+        return f"""
+        <div style='background:#fff; border-radius:4px; border:1px solid #e2e8f0; display:flex; flex-direction:column; justify-content:center; align-items:center; height:100px; width:100%;'>
+            <div style='font-size:11px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:1px;'>SİSTEM DURUMU</div>
+            <div style='font-size:28px; font-weight:700; color:{color}; margin-top:5px;'>{main_label}</div>
+        </div>"""
 
-    return card("GERÇEK ARAÇ", real_v), card("AI TAHMİN", pred_v, "#3498db"), confidence_card(confidence_label, confidence_detail, confidence_color), card("FARK", diff, "#dc2626"), fig, gr.update(choices=v_arms, value=kol)
+    return (
+        card("GERÇEK ARAÇ", real_v, "#1e293b"),
+        card("AI TAHMİN", pred_v, "#1e293b"),
+        confidence_card(confidence_label, confidence_color),
+        card("VARYANS", diff, "#1e293b"),
+        fig,
+        gr.update(choices=v_arms, value=kol)
+    )
 
-def handle_map_selection(kavsak):
+# ✅ DÜZELTİLMİŞ: Harita seçimi data_type’a göre tarihleri de doğru setler
+def handle_map_selection_v2(kavsak, current_data_type):
     choices = ANALYSIS_INTERSECTIONS.get(kavsak, [])
     if kavsak in KIZILIRMAK_LIST:
         dates = DATES_KIZILIRMAK
-        data_type_visible = False
+        return (
+            gr.update(choices=choices, value=choices[0] if choices else None),  # c_in
+            gr.update(choices=dates, value=dates[0] if dates else None),        # t_in
+            gr.update(visible=False)                                            # data_type_in
+        )
     else:
-        dates = DATES_ILDEM["karlı gün verisi(şubat)"]
-        data_type_visible = True
-    
-    return (
-        gr.update(choices=choices, value=choices[0] if choices else None), 
-        gr.update(choices=dates, value=dates[0] if dates else None),
-        gr.update(visible=data_type_visible)
-    )
+        dt = current_data_type if current_data_type in DATES_ILDEM else "karlı gün verisi(şubat)"
+        dates = DATES_ILDEM.get(dt, DATES_ILDEM["karlı gün verisi(şubat)"])
+        return (
+            gr.update(choices=choices, value=choices[0] if choices else None),  # c_in
+            gr.update(choices=dates, value=dates[0] if dates else None),        # t_in
+            gr.update(visible=True, value=dt)                                   # data_type_in
+        )
 
 def update_dates_by_data_type(data_type, kavsak):
     if kavsak not in KIZILIRMAK_LIST:
@@ -235,51 +268,9 @@ def update_dates_by_data_type(data_type, kavsak):
         return gr.update(choices=dates, value=dates[0] if dates else None)
     return gr.update()
 
-def navigate_to_traffic_light_suggestion(kavsak, kol, saat):
-    """Traffic Analysis'den Traffic Light Suggestion'a yönlendirme fonksiyonu"""
-    # Kavşak eşleştirmesi (Analysis -> Traffic Light format)
-    intersection_mapping = {
-        "Emrah": "Gesi",  # En yakın eşleşme
-        "Farabi": "Gesi", 
-        "Yahya Kemal": "Gesi",
-        "İldem 1": "İldem 1",
-        "İldem 2": "İldem 2", 
-        "İldem 3": "İldem 3",
-        "İldem 4": "İldem 4",
-        "İldem 5": "İldem 5",
-        "Serkent": "Serkent",
-        "Beyazşehir": "Beyazşehir",
-        "Toki": "Toki"
-    }
-    
-    mapped_intersection = intersection_mapping.get(kavsak, "Gesi")
-    
-    # Kol formatını düzenle (sadece harf kısmını al)
-    arm_letter = kol.split(" - ")[0] if " - " in kol else kol[:1]
-    
-    # INTERSECTIONS sözlüğünden uygun kolu bul
-    available_arms = list(INTERSECTIONS.get(mapped_intersection, {}).keys())
-    matched_arm = None
-    
-    for arm in available_arms:
-        if arm.startswith(arm_letter):
-            matched_arm = arm
-            break
-    
-    if not matched_arm and available_arms:
-        matched_arm = available_arms[0]
-    
-    return (
-        gr.update(value=mapped_intersection),  # intersection dropdown
-        gr.update(choices=available_arms, value=matched_arm),  # arm dropdown  
-        gr.update(value=int(saat)),  # hour dropdown
-        f"✅ {kavsak} kavşağı {kol} kolu için saat {saat}:00'da trafik ışığı önerisi alınmaya hazır. Lütfen aşağıdaki 'CALCULATE SUGGESTION' butonuna tıklayın."
-    )
-
-# Navigate to traffic light suggestion fonksiyonu artık inline tanımlandı
-
-
-# === UPDATED: Helper Function: Generate Traffic Light Visualization HTML (CARD STYLE) ===
+# ==========================================
+# 4) TRAFFIC LIGHT HTML (senin mevcut)
+# ==========================================
 def generate_traffic_light_html(green_sec, yellow_sec, red_sec, protection_sec):
     try:
         green = float(green_sec) if green_sec else 0
@@ -292,11 +283,9 @@ def generate_traffic_light_html(green_sec, yellow_sec, red_sec, protection_sec):
         yellow_pct = (yellow / total_time * 100) if total_time > 0 else 0
         red_pct = (red / total_time * 100) if total_time > 0 else 0
 
-        # Yeni "Analysis Card" stiline uygun HTML
         html = f"""
         <div style="background: #ffffff; padding: 20px; border-radius: 12px; box-shadow: none;">
             <div style="display: flex; justify-content: space-around; align-items: flex-start; flex-wrap: wrap; gap: 30px;">
-
                 <div style="text-align: center;">
                     <div style="background: linear-gradient(145deg, #e3ede6 60%, #b7cfc0 100%); padding: 15px 12px; border-radius: 16px; border: 2px solid #c7dbcf; display: inline-block;">
                         <div id="red-light" style="width: 60px; height: 60px; border-radius: 50%; margin: 8px auto; background: #6c1a1a; box-shadow: inset 0 2px 5px rgba(0,0,0,0.2); transition: all 0.4s ease;"></div>
@@ -318,27 +307,22 @@ def generate_traffic_light_html(green_sec, yellow_sec, red_sec, protection_sec):
                     </div>
 
                     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 15px;">
-
                         <div style="background: #ffffff; border-radius: 10px; padding: 15px; border: 1px solid #e2e8f0; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
                             <div style="font-size: 11px; color: #64748b; font-weight: bold; text-transform: uppercase;">GREEN</div>
                             <div style="font-size: 28px; font-weight: 800; color: #2e7d32; margin: 5px 0;">{green:.0f}s</div>
                         </div>
-
                         <div style="background: #ffffff; border-radius: 10px; padding: 15px; border: 1px solid #e2e8f0; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
                             <div style="font-size: 11px; color: #64748b; font-weight: bold; text-transform: uppercase;">YELLOW</div>
                             <div style="font-size: 28px; font-weight: 800; color: #f57c00; margin: 5px 0;">{yellow:.0f}s</div>
                         </div>
-
                         <div style="background: #ffffff; border-radius: 10px; padding: 15px; border: 1px solid #e2e8f0; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
                             <div style="font-size: 11px; color: #64748b; font-weight: bold; text-transform: uppercase;">RED</div>
                             <div style="font-size: 28px; font-weight: 800; color: #c62828; margin: 5px 0;">{red:.0f}s</div>
                         </div>
-
                         <div style="background: #ffffff; border-radius: 10px; padding: 15px; border: 1px solid #e2e8f0; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
                             <div style="font-size: 11px; color: #64748b; font-weight: bold; text-transform: uppercase;">PROTECTION</div>
                             <div style="font-size: 28px; font-weight: 800; color: #2c3e50; margin: 5px 0;">{protection:.0f}s</div>
                         </div>
-
                     </div>
                 </div>
             </div>
@@ -379,31 +363,28 @@ def generate_traffic_light_html(green_sec, yellow_sec, red_sec, protection_sec):
     except Exception as e:
         return f"<div style='color: red; padding: 20px;'>Error generating visualization: {e}</div>"
 
-
-# === Upload + Train Function ===
+# =========================
+# 5) TRAIN / PLOT / PREPROCESS (senin kodun)
+# =========================
 def upload_and_train(npz_file, graph_file, algorithm):
     try:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         if npz_file:
             shutil.copy(npz_file.name, NPZ_DEST)
-            print(f"Copied NPZ from {npz_file.name} to {NPZ_DEST}")
         else:
-            return "Please upload an NPZ file.", None
+            return "Please upload an NPZ file."
 
         if graph_file:
             shutil.copy(graph_file.name, GRAPH_CSV_DEST)
-            print(f"Copied CSV from {graph_file.name} to {GRAPH_CSV_DEST}")
         else:
-            return "Please upload a Graph CSV file.", None
+            return "Please upload a Graph CSV file."
 
         cp = CONFIG_PY.read_text()
-        cp = pd.Series(cp.splitlines()).replace(r'^GRAPH = ".*"$', f'GRAPH = "{GRAPH_CSV_DEST.as_posix()}"', regex=True).str.cat(sep='\n')
-        cp = pd.Series(cp.splitlines()).replace(r'^DATA_PATH = ".*"$', f'DATA_PATH = "{NPZ_DEST.as_posix()}"', regex=True).str.cat(sep='\n')
-        cp = pd.Series(cp.splitlines()).replace(r'^MODEL = ".*"$', f'MODEL = "{algorithm}"', regex=True).str.cat(sep='\n')
+        cp = pd.Series(cp.splitlines()).replace(r'^GRAPH = ".*"$', f'GRAPH = "{GRAPH_CSV_DEST.as_posix()}"', regex=True).str.cat(sep="\n")
+        cp = pd.Series(cp.splitlines()).replace(r'^DATA_PATH = ".*"$', f'DATA_PATH = "{NPZ_DEST.as_posix()}"', regex=True).str.cat(sep="\n")
+        cp = pd.Series(cp.splitlines()).replace(r'^MODEL = ".*"$', f'MODEL = "{algorithm}"', regex=True).str.cat(sep="\n")
         CONFIG_PY.write_text(cp)
-        print("config.py updated successfully.")
 
-        print(f"Starting training with algorithm: {algorithm}")
         proc = subprocess.run(
             ["python", str(BASE_DIR / "train.py")],
             capture_output=True,
@@ -411,22 +392,14 @@ def upload_and_train(npz_file, graph_file, algorithm):
             check=True,
             cwd=BASE_DIR
         )
-        logs = proc.stdout
-        if proc.stderr:
-            logs += "\n" + proc.stderr
-
+        logs = proc.stdout + ("\n" + proc.stderr if proc.stderr else "")
         return f"Training completed successfully!\n\nLogs:\n{logs[-2000:]}"
     except subprocess.CalledProcessError as e:
-        print(f"Subprocess Error:\nSTDOUT: {e.stdout}\nSTDERR: {e.stderr}")
         return f"❌ Error during training:\n{e.stderr}\n{e.stdout}"
-    except FileNotFoundError as e:
-        return f"❌ Required file not found: {e}. Please ensure all scripts and data are in their correct paths."
     except Exception as e:
         import traceback
-        print(f"General Error:\n{traceback.format_exc()}")
         return f"❌ An unexpected error occurred:\n{traceback.format_exc()}"
 
-# === Plot Generation Function ===
 def generate_plot(intersection, arm, zoom_start, zoom_end):
     try:
         if intersection is None or arm is None:
@@ -434,11 +407,8 @@ def generate_plot(intersection, arm, zoom_start, zoom_end):
 
         loc_id = INTERSECTIONS[intersection][arm]
 
-        print("Running pred_csv.py for real_flow.csv...")
         subprocess.run(["python", str(PRED_CSV), str(REAL_FLOW_CSV), str(REAL_FLOW_GAR)], check=True, cwd=BASE_DIR)
-        print("Running pred_csv.py for test_results.csv...")
         subprocess.run(["python", str(PRED_CSV), str(TEST_RESULTS_CSV), str(TEST_GAR)], check=True, cwd=BASE_DIR)
-        print("GAR files generated.")
 
         lines = PLOT_PY.read_text().splitlines()
         patched = []
@@ -456,34 +426,21 @@ def generate_plot(intersection, arm, zoom_start, zoom_end):
             else:
                 patched.append(line)
         PLOT_PY.write_text("\n".join(patched))
-        print("plot.py patched successfully.")
 
-        print("Running plot.py to generate image...")
         subprocess.run(["python", str(PLOT_PY)], check=True, cwd=BASE_DIR)
-        print("plot.py execution complete.")
 
         if PLOT_IMG.exists():
-            print(f"Plot image found at {PLOT_IMG}. Returning image.")
             return "Plot generated successfully!", np.array(Image.open(PLOT_IMG).convert("RGB"))
-        else:
-            print(f"Plot image not found at {PLOT_IMG}.")
-            return "❌ Plot image not found after generation. Check plot.py output.", None
-
+        return "❌ Plot image not found after generation. Check plot.py output.", None
     except subprocess.CalledProcessError as e:
-        print(f"Subprocess Error during plotting:\nSTDOUT: {e.stdout}\nSTDERR: {e.stderr}")
         return f"❌ Error creating plot:\n{e.stderr}\n{e.stdout}", None
-    except FileNotFoundError as e:
-        print(f"File not found during plotting: {e}")
-        return f"❌ Required file for plotting not found: {e}. Ensure pred_csv.py, plot.py, real_flow.csv, and test_results.csv exist.", None
     except Exception as e:
         import traceback
-        print(f"General Error during plotting:\n{traceback.format_exc()}")
         return f"❌ An unexpected error occurred during plot generation:\n{traceback.format_exc()}", None
 
 def select_algorithm_action(algorithm_name):
     return f"Algorithm selected: {algorithm_name}"
 
-# === Preprocessing Functions ===
 def datetime_to_minutes(dt):
     if pd.isna(dt):
         return None
@@ -498,35 +455,28 @@ def preprocess_excel_and_generate_npz_ui(excel_file):
         sheet_names = xls.sheet_names
 
         all_datetimes = []
-        # Timestep'leri belirlemek için ilk geçiş
         for sheet in sheet_names:
             df_temp = pd.read_excel(xls, sheet_name=sheet)
-            # "Tarih" kelimesinin geçtiği satırı bul
-            mask = df_temp.apply(lambda row: row.astype(str).str.contains('Tarih').any(), axis=1)
+            mask = df_temp.apply(lambda row: row.astype(str).str.contains("Tarih").any(), axis=1)
             header_idx = mask.idxmax() if mask.any() else 0
 
             df = pd.read_excel(xls, sheet_name=sheet, skiprows=header_idx + 1)
-            df['TarihSaat'] = pd.to_datetime(df['Tarih'].astype(str) + ' ' + df['Saat'].astype(str), errors='coerce')
-            all_datetimes.extend(df['TarihSaat'].dropna().unique())
+            df["TarihSaat"] = pd.to_datetime(df["Tarih"].astype(str) + " " + df["Saat"].astype(str), errors="coerce")
+            all_datetimes.extend(df["TarihSaat"].dropna().unique())
 
         unique_datetimes = sorted(set(all_datetimes), key=lambda x: datetime_to_minutes(x))
-        datetime_to_timestep = {dt: i+1 for i, dt in enumerate(unique_datetimes)}
+        datetime_to_timestep = {dt: i + 1 for i, dt in enumerate(unique_datetimes)}
 
         all_dfs = []
         location_offset = 0
-        sheet_info = []
 
-        # Veriyi işlemek için ikinci geçiş
         for sheet in sheet_names:
             df_temp = pd.read_excel(xls, sheet_name=sheet)
-            # Başlık satırını dinamik bul
-            mask = df_temp.apply(lambda row: row.astype(str).str.contains('Tarih').any(), axis=1)
+            mask = df_temp.apply(lambda row: row.astype(str).str.contains("Tarih").any(), axis=1)
             header_idx = mask.idxmax() if mask.any() else 0
 
-            # Veriyi başlık satırının bir altından okumaya başla
             df = pd.read_excel(xls, sheet_name=sheet, skiprows=header_idx + 1)
 
-            # Sadece geçerli kolları al (Unnamed, Tarih, Saat, Toplam hariç)
             candidate_cols = [
                 col for col in df.columns
                 if col not in ["Tarih", "Saat", "Toplam"]
@@ -534,28 +484,24 @@ def preprocess_excel_and_generate_npz_ui(excel_file):
             ]
 
             for col in candidate_cols:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
+                df[col] = pd.to_numeric(df[col], errors="coerce")
 
-            df_numeric = df[candidate_cols].select_dtypes(include='number')
-
+            df_numeric = df[candidate_cols].select_dtypes(include="number")
             if df_numeric.empty:
-                sheet_info.append(f"❌ {sheet}: Sayısal veri bulunamadı")
                 continue
 
-            num_cols = len(df_numeric.columns)
-            sheet_info.append(f"✅ {sheet}: {num_cols} kol (Lokasyon {location_offset}-{location_offset+num_cols-1})")
-
-            df['TarihSaat'] = pd.to_datetime(df['Tarih'].astype(str) + ' ' + df['Saat'].astype(str), errors='coerce')
+            df["TarihSaat"] = pd.to_datetime(df["Tarih"].astype(str) + " " + df["Saat"].astype(str), errors="coerce")
 
             rows = []
             for _, row in df.iterrows():
-                dt = row['TarihSaat']
-                if pd.isna(dt): continue
+                dt = row["TarihSaat"]
+                if pd.isna(dt):
+                    continue
                 ts = datetime_to_timestep.get(dt)
-                if ts is None: continue
+                if ts is None:
+                    continue
 
                 for loc_idx, col_name in enumerate(df_numeric.columns):
-                    # NaN değerleri 0'a çekerek araç sayılarını garantiye alıyoruz
                     flow_val = row[col_name] if not pd.isna(row[col_name]) else 0
                     rows.append({
                         "timestep": ts,
@@ -569,9 +515,8 @@ def preprocess_excel_and_generate_npz_ui(excel_file):
                 all_dfs.append(pd.DataFrame(rows))
                 location_offset += len(df_numeric.columns)
 
-        # NPZ ve CSV Kayıt İşlemleri
         combined_df = pd.concat(all_dfs, ignore_index=True)
-        combined_df.sort_values(by=['timestep', 'location'], inplace=True)
+        combined_df.sort_values(by=["timestep", "location"], inplace=True)
 
         temp_dir = tempfile.mkdtemp()
         csv_path = os.path.join(temp_dir, "combined_fullcols_formatted.csv")
@@ -579,42 +524,46 @@ def preprocess_excel_and_generate_npz_ui(excel_file):
 
         combined_df.to_csv(csv_path, index=False)
 
-        timesteps = combined_df['timestep'].max()
+        timesteps = combined_df["timestep"].max()
         locations = location_offset
         data = np.zeros((timesteps, locations, 3))
 
         for _, row in combined_df.iterrows():
-            ts_idx = int(row['timestep']) - 1
-            loc_idx = int(row['location'])
+            ts_idx = int(row["timestep"]) - 1
+            loc_idx = int(row["location"])
             if ts_idx < timesteps and loc_idx < locations:
-                data[ts_idx, loc_idx] = [row['flow'], row['occupy'], row['speed']]
+                data[ts_idx, loc_idx] = [row["flow"], row["occupy"], row["speed"]]
 
         np.savez(npz_path, data=data)
 
-        return (f"✅ Preprocessing completed!\nNodes: {locations}, Timesteps: {timesteps}",
-                gr.File(value=csv_path, visible=True), gr.File(value=npz_path, visible=True),
-                gr.update(visible=True), gr.update(visible=True))
+        return (
+            f"✅ Preprocessing completed!\nNodes: {locations}, Timesteps: {timesteps}",
+            gr.File(value=csv_path, visible=True),
+            gr.File(value=npz_path, visible=True),
+            gr.update(visible=True),
+            gr.update(visible=True)
+        )
 
     except Exception as e:
         import traceback
         return f"❌ Hata: {traceback.format_exc()}", None, None, gr.update(visible=False), gr.update(visible=False)
+
 def clear_excel_inputs():
     return "Excel file cleared.", None, None, gr.update(visible=False), gr.update(visible=False)
 
-# --- UI Element Definitions ---
+# =========================
+# HEADER / FOOTER + CSS
+# =========================
 try:
     main_logo_data_uri = get_base64_image_tag(SMARTTECH_LOGO_PATH, max_height=90)
-except FileNotFoundError:
-    print(f"Warning: {SMARTTECH_LOGO_PATH.name} not found.")
+except:
     main_logo_data_uri = ""
 
 try:
     kayseri_logo_data_uri = get_base64_image_tag(KAYSERI_ULASIM_LOGO_PATH, max_height=80)
-except FileNotFoundError:
-    print(f"Warning: {KAYSERI_ULASIM_LOGO_PATH.name} not found.")
+except:
     kayseri_logo_data_uri = ""
 
-# UPDATED Header HTML (Ultra-Compact Version)
 header_html = f"""
 <div class="smarttech-header-container">
     <div style="display: flex; align-items: center;">
@@ -646,118 +595,53 @@ footer_html = f"""
 </div>
 """
 
-# UPDATED CSS (Horizontal Header + Global Purple Theme)
 css_styles = """
 @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&family=Open+Sans:wght@400;600&display=swap');
 @import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css');
 
-/* === Global Color Overrides (Removing Orange) === */
-:root {
-    --color-accent: #8e44ad !important;
-    --color-accent-soft: rgba(142, 68, 173, 0.2) !important;
-    --color-primary: #8e44ad !important;
-}
+html, body, #gradio-app { height:100% !important; width:100% !important; margin:0 !important; padding:0 !important; font-family:'Open Sans', sans-serif; }
+.gradio-container { max-width:100% !important; margin:0 !important; padding:20px; height:100% !important; overflow-y:auto !important; display:flex; flex-direction:column; background-color:#ffffff; }
+.gradio-tabs { background-color:#ffffff; border-radius:10px; display:flex; flex-direction:column; flex-grow:1; }
 
-html, body, #gradio-app {
-    height: 100% !important;
-    width: 100% !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    font-family: 'Open Sans', sans-serif;
-    --color-accent: #8e44ad !important; /* Force purple on everything */
-}
-.gradio-container { max-width: 100% !important; margin: 0 !important; padding: 20px; height: 100% !important; overflow-y: auto !important; display: flex; flex-direction: column; background-color: #ffffff; }
+.smarttech-header-container { display:flex; align-items:center; justify-content:space-between; padding:5px 15px; margin:0 0 5px 0; background:linear-gradient(to right,#f8f8f8,#ffffff); border-radius:8px; flex-shrink:0; flex-wrap:wrap; gap:10px; }
+.smarttech-logo { height:40px; margin-right:12px; }
+.smarttech-text-group { display:flex; flex-direction:row; align-items:baseline; gap:8px; flex-wrap:wrap; }
+.smarttech-title { font-family:'Montserrat', sans-serif; font-size:15px; font-weight:700; color:#2c3e50; }
+.smarttech-desc { font-size:13px; color:#555555; }
+.smarttech-button { background-color:#6C9F69; color:white; padding:6px 14px; border:none; border-radius:6px; cursor:pointer; font-size:12px; font-weight:600; transition:background-color 0.3s ease; box-shadow:0 2px 5px rgba(0, 128, 0, 0.2); white-space:nowrap; }
+.smarttech-button:hover { background-color:#5A8757; }
+.header-divider { border:0; height:1px; background-image:linear-gradient(to right, rgba(0,0,0,0), rgba(0,0,0,0.1), rgba(0,0,0,0)); margin-bottom:10px; flex-shrink:0; }
 
-/* === Horizontal Compact Header Styles === */
-.smarttech-header-container {
-    display: flex;
-    align-items: center;
-    justify-content: space-between; /* Pushes button to right, text to left */
-    padding: 5px 15px;
-    margin: 0 0 5px 0;
-    background: linear-gradient(to right, #f8f8f8, #ffffff);
-    border-radius: 8px;
-    flex-shrink: 0;
-    flex-wrap: wrap;
-    gap: 10px;
-}
-.smarttech-logo { height: 40px; margin-right: 12px; } /* Smaller logo */
+.smarttech-footer-container { margin-top:20px; padding-top:15px; background-color:#f8f8f8; border-top:1px solid #e0e0e0; text-align:center; font-size:12px; color:#555555; flex-shrink:0; border-radius:8px; padding-bottom:10px; }
+.smarttech-contact-info a { color:#6C9F69; text-decoration:none; }
+.collaboration-logos { display:flex; justify-content:center; align-items:center; }
+.kayseri-logo { height:80px; object-fit:contain; margin:0 10px; }
 
-.smarttech-text-group {
-    display: flex;
-    flex-direction: row;
-    align-items: baseline;
-    gap: 8px;
-    flex-wrap: wrap;
-}
-
-.smarttech-title {
-    font-family: 'Montserrat', sans-serif;
-    font-size: 15px;
-    font-weight: 700;
-    color: #2c3e50;
-}
-
-.smarttech-desc {
-    font-size: 13px;
-    color: #555555;
-}
-
-.smarttech-button {
-    background-color: #6C9F69;
-    color: white;
-    padding: 6px 14px;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 600;
-    transition: background-color 0.3s ease;
-    box-shadow: 0 2px 5px rgba(0, 128, 0, 0.2);
-    white-space: nowrap;
-}
-.smarttech-button:hover { background-color: #5A8757; }
-.header-divider { border: 0; height: 1px; background-image: linear-gradient(to right, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0)); margin-bottom: 10px; flex-shrink: 0; }
-
-/* === Common Styles === */
-.content-block { background-color: #fcfcfc; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; display: flex; flex-direction: column; align-items: center; justify-content: space-between; min-height: 180px; text-align: center; flex: 1; }
-.block-title { font-family: 'Montserrat', sans-serif; font-size: 16px; font-weight: bold; color: #333333; margin-bottom: 15px; text-transform: uppercase; }
-.train-model-button, .select-button, .file-upload-button { background-color: #6C9F69; color: white; border: none; border-radius: 5px; cursor: pointer; transition: background-color 0.3s ease; }
-.train-model-button { padding: 12px 25px; font-size: 16px; font-weight: bold; }
-.train-model-button:hover, .select-button:hover, .file-upload-button:hover { background-color: #5A8757; }
-.training-log-area { background-color: #f5f5f5 !important; border: 1px solid #cccccc !important; padding: 12px !important; min-height: 300px !important; overflow-y: auto !important; font-family: 'Consolas', 'monospace' !important; font-size: 12px !important; color: #333333 !important; width: 100% !important; }
-.training-log-area textarea { background-color: #f5f5f5 !important; border: none !important; resize: none !important; }
-.gradio-tabs { background-color: #ffffff; border-radius: 10px; display: flex; flex-direction: column; flex-grow: 1; }
-
-/* === STRICT PURPLE OVERRIDES === */
-/* Active Tabs */
-.gradio-tabs > div:first-child button.selected { color: #8e44ad !important; border-bottom: 2px solid #8e44ad !important; font-weight: bold; }
-button[aria-selected="true"] { color: #8e44ad !important; border-bottom: 2px solid #8e44ad !important; box-shadow: none !important; }
-
-/* Sliders */
-input[type=range] { --range-active: #8e44ad !important; --range-thumb: #8e44ad !important; }
-.range-fill { background-color: #8e44ad !important; }
-
-/* Loaders/Progress Bars */
-.progress-level .fill { background-color: #8e44ad !important; }
-
-.content-block .gr-file, .content-block .gr-dropdown { background-color: #ffffff !important; border: 1px solid #e0e0e0 !important; border-radius: 8px !important; padding: 12px !important; margin-top: 8px; width: 100%; }
-.smarttech-footer-container { margin-top: 20px; padding-top: 15px; background-color: #f8f8f8; border-top: 1px solid #e0e0e0; text-align: center; font-size: 12px; color: #555555; flex-shrink: 0; border-radius: 8px; padding-bottom: 10px; }
-.smarttech-contact-info a { color: #6C9F69; text-decoration: none; }
-.collaboration-logos { display: flex; justify-content: center; align-items: center; }
-.kayseri-logo { height: 80px; object-fit: contain; margin: 0 10px; }
+.content-block { background-color:#ffffff; border:1px solid #e2e8f0; border-radius:4px; padding:20px; box-shadow:none; }
+.train-model-button { background-color:#1e293b !important; color:#ffffff !important; border-radius:4px !important; font-weight:600 !important; text-transform:uppercase !important; letter-spacing:1px !important; height:48px !important; border:none !important; }
+.select-button { background-color:#475569 !important; color:#ffffff !important; border-radius:4px !important; font-weight:600 !important; text-transform:uppercase !important; letter-spacing:1px !important; height:48px !important; border:none !important; }
+.compact-row { margin-bottom:10px !important; gap:10px !important; }
+.training-log-area { background-color:#f5f5f5 !important; border:1px solid #cccccc !important; padding:12px !important; min-height:300px !important; overflow-y:auto !important; font-family:'Consolas','monospace' !important; font-size:12px !important; color:#333333 !important; width:100% !important; }
+.training-log-area textarea { background-color:#f5f5f5 !important; border:none !important; resize:none !important; }
 """
 
-# Gradio Interface Definition
-with gr.Blocks(title="SmartTech AI Platform") as demo:
-    # 1. Header Section
+# =========================
+# GRADIO APP
+# =========================
+with gr.Blocks(title="SmartTech AI Platform", css=css_styles) as demo:
     gr.HTML(header_html)
 
-    # Tabs for different functionalities
+    current_intersection_state = gr.State(value="Farabi")
+    current_date_state = gr.State(value=DATES_KIZILIRMAK[0])
+    current_hour_state = gr.State(value=14)
+    current_arm_state = gr.State(value=ANALYSIS_INTERSECTIONS["Farabi"][0])
+    current_data_type_state = gr.State(value="karlı gün verisi(şubat)")
+
     with gr.Tabs() as tabs:
+
         with gr.TabItem("Data Preprocessing"):
             with gr.Column(elem_classes="content-block"):
-                gr.Markdown("<p class='block-title'>UPLOAD EXCEL & PREPROCESS</p>")
+                gr.Markdown("<p style='font-weight:700; color:#0f172a; text-align:center;'>UPLOAD EXCEL & PREPROCESS</p>")
                 excel_input = gr.File(label="Upload Excel File", file_types=[".xlsx", ".xls"], file_count="single")
                 preprocessing_status = gr.Textbox(label="Status", interactive=False, value="Please upload an Excel file to begin.")
 
@@ -769,23 +653,25 @@ with gr.Blocks(title="SmartTech AI Platform") as demo:
                     csv_output_file = gr.File(label="Download Generated CSV", visible=False)
                     npz_output_file = gr.File(label="Download Generated NPZ", visible=False)
 
-                process_btn.click(preprocess_excel_and_generate_npz_ui, inputs=[excel_input], outputs=[preprocessing_status, csv_output_file, npz_output_file, csv_output_file, npz_output_file])
-                clear_btn.click(clear_excel_inputs, inputs=[], outputs=[preprocessing_status, excel_input, csv_output_file, csv_output_file, npz_output_file])
+                process_btn.click(preprocess_excel_and_generate_npz_ui, inputs=[excel_input],
+                                  outputs=[preprocessing_status, csv_output_file, npz_output_file, csv_output_file, npz_output_file])
+                clear_btn.click(clear_excel_inputs, inputs=[],
+                                outputs=[preprocessing_status, excel_input, csv_output_file, csv_output_file, npz_output_file])
 
         with gr.TabItem("Upload + Train"):
             with gr.Row(variant="panel"):
                 with gr.Column(elem_classes="content-block"):
-                    gr.Markdown("<p class='block-title'>UPLOAD NPZ</p>")
+                    gr.Markdown("<p style='font-weight:700; color:#0f172a; text-align:center;'>UPLOAD NPZ</p>")
                     npz_input = gr.File(label="Upload NPZ File", file_types=[".npz"], file_count="single")
                     npz_output = gr.Markdown("No file selected yet.")
 
                 with gr.Column(elem_classes="content-block"):
-                    gr.Markdown("<p class='block-title'>UPLOAD CSV</p>")
+                    gr.Markdown("<p style='font-weight:700; color:#0f172a; text-align:center;'>UPLOAD CSV</p>")
                     csv_input = gr.File(label="Upload Graph CSV", file_types=[".csv"], file_count="single")
                     csv_output = gr.Markdown("No file selected yet.")
 
                 with gr.Column(elem_classes="content-block"):
-                    gr.Markdown("<p class='block-title'>SELECT ALGORITHM</p>")
+                    gr.Markdown("<p style='font-weight:700; color:#0f172a; text-align:center;'>SELECT ALGORITHM</p>")
                     algo_input = gr.Dropdown(["default", "Garnoldi", "APPNP", "GPRGNN"], label="Select Algorithm", value="default")
                     algorithm_status = gr.Markdown("Algorithm selection pending.")
                     select_algo_btn = gr.Button("SELECT", elem_classes="select-button")
@@ -793,20 +679,19 @@ with gr.Blocks(title="SmartTech AI Platform") as demo:
 
             with gr.Row(variant="panel"):
                 with gr.Column(scale=1, elem_classes="content-block"):
-                    gr.Markdown("<p class='block-title'>TRAINING LOG</p>")
-                    training_log_display = gr.Textbox(label="Log Output", lines=10, interactive=False, value="Training logs will appear here when the process starts...", elem_classes="training-log-area")
+                    gr.Markdown("<p style='font-weight:700; color:#0f172a; text-align:center;'>TRAINING LOG</p>")
+                    training_log_display = gr.Textbox(label="Log Output", lines=10, interactive=False,
+                                                     value="Training logs will appear here when the process starts...",
+                                                     elem_classes="training-log-area")
 
-            with gr.Row(elem_classes="train-model-btn-container"):
+            with gr.Row():
                 train_model_button = gr.Button("TRAIN THE MODEL", elem_classes="train-model-button")
 
-            npz_input.upload(lambda f: gr.Markdown(f"**NPZ File Uploaded:** `{f.name.split('/')[-1]}`" if f else "No file selected yet."), npz_input, npz_output)
-            csv_input.upload(lambda f: gr.Markdown(f"**CSV File Uploaded:** `{f.name.split('/')[-1]}`" if f else "No file selected yet."), csv_input, csv_output)
-            algo_input.change(select_algorithm_action, inputs=algo_input, outputs=algorithm_status)
             train_model_button.click(upload_and_train, inputs=[npz_input, csv_input, algo_input], outputs=training_log_display)
 
         with gr.TabItem("Plot"):
-            with gr.Column(elem_classes="content-block", scale=1, elem_id="plot_tab_content_column"):
-                gr.Markdown("<p class='block-title'>GENERATE PLOT</p>")
+            with gr.Column(elem_classes="content-block", scale=1):
+                gr.Markdown("<p style='font-weight:700; color:#0f172a; text-align:center;'>GENERATE PLOT</p>")
                 plot_status_output = gr.Textbox(label="Plot Status", interactive=False, value="Select options and click Generate Plot.")
                 with gr.Row():
                     intersection_dd = gr.Dropdown(choices=list(INTERSECTIONS.keys()), label="Select Intersection")
@@ -826,210 +711,88 @@ with gr.Blocks(title="SmartTech AI Platform") as demo:
                 intersection_dd.change(update_arms, inputs=intersection_dd, outputs=arm_dd)
                 plot_btn.click(generate_plot, [intersection_dd, arm_dd, zoom_start, zoom_end], [plot_status_output, plot_out])
 
-        # === ENTEGRE EDİLMİŞ TRAFFIC ANALYSIS SEKMESİ ===
+        # =========================
+        # ✅ Traffic Analysis (FINAL)
+        # =========================
         with gr.TabItem("Traffic Analysis"):
             with gr.Column(elem_classes="content-block"):
-                gr.Markdown("<p class='block-title'>SMARTTECH AI TRAFIK ANALIZ PANELI</p>")
+                gr.HTML("<h3 style='text-align:center; padding:10px; color:#0f172a; font-weight:700;'>TRAFİK YÖNETİM VE ANALİZ SİSTEMİ</h3>")
+
                 with gr.Row():
-                    with gr.Column(scale=2):
-                        # Haritadan seçim yapmak için gizli trigger bileşeni
-                        map_trigger = gr.Textbox(label="📍 Seçilen Kavşak", elem_id="map_trigger", value="Farabi", lines=1, visible=True)
-                        with gr.Group():
-                            gr.HTML(value=create_map())
-                        with gr.Column(variant="panel"):
-                            with gr.Row():
-                                t_in = gr.Dropdown(DATES_KIZILIRMAK, label="Tarih", value=DATES_KIZILIRMAK[0], allow_custom_value=True)
-                                s_in = gr.Slider(0, 23, value=14, step=1, label="Saat (24s)")
-                            
+                    with gr.Column(scale=1):
+                        map_trigger = gr.Textbox(label="Lokasyon", elem_id="map_trigger", value="Beyazşehir")
+                        gr.HTML(value=create_map())
+
+                        with gr.Row(elem_classes="compact-row"):
                             data_type_in = gr.Dropdown(
                                 choices=["karlı gün verisi(şubat)", "karlı gün verisi(ocak)", "normal veri(kasım)"],
-                                label="İldem Data Type",
-                                value="karlı gün verisi(şubat)",
-                                visible=False
+                                label="Veri Tipi",
+                                value="normal veri(kasım)",
+                                visible=True
                             )
-                            
-                            c_in = gr.Dropdown(choices=ANALYSIS_INTERSECTIONS["Farabi"], label="İncelenen Kol", value=ANALYSIS_INTERSECTIONS["Farabi"][0], allow_custom_value=True)
-                            
-                            # Trafik Işığı Önerisi Butonu
-                            traffic_light_btn = gr.Button(
-                                "🚦 TRAFİK FAZ ÖNERİSİ ALMAK İÇİN TIKLAYIN", 
-                                elem_classes="train-model-button",
-                                size="lg"
+                            c_in = gr.Dropdown(
+                                choices=ANALYSIS_INTERSECTIONS.get("Beyazşehir", []),
+                                label="İncelenen Kol",
+                                value=(ANALYSIS_INTERSECTIONS.get("Beyazşehir", [None])[0])
                             )
 
-                    with gr.Column(scale=3):
-                        with gr.Row():
+                        with gr.Row(elem_classes="compact-row"):
+                            t_in = gr.Dropdown(
+                                choices=DATES_ILDEM.get("normal veri(kasım)", DATES_KIZILIRMAK),
+                                label="Tarih",
+                                value=(DATES_ILDEM.get("normal veri(kasım)", DATES_KIZILIRMAK)[0])
+                            )
+                            s_in = gr.Dropdown(choices=list(range(24)), label="Saat", value=14)
+
+                    with gr.Column(scale=1):
+                        with gr.Row(elem_classes="compact-row"):
                             res1 = gr.HTML()
                             res2 = gr.HTML()
+                        with gr.Row(elem_classes="compact-row"):
                             res3 = gr.HTML()
                             res4 = gr.HTML()
-                        plot_out_analysis = gr.Plot(label="Analysis Chart")
+                        plot_out_analysis = gr.Plot(show_label=False)
 
-                # Eventler
-                map_trigger.change(handle_map_selection, map_trigger, [c_in, t_in, data_type_in])
-                data_type_in.change(update_dates_by_data_type, [data_type_in, map_trigger], [t_in])
-                
-                ins = [map_trigger, t_in, s_in, c_in, data_type_in]
-                outs = [res1, res2, res3, res4, plot_out_analysis, c_in]
-                for i in ins:
-                    i.change(update_dashboard, ins, outs)
-                    
-                # Trafik Işığı Önerisi buton eventi - JavaScript ile tab switching
-                def create_traffic_light_js():
-                    """Gradio 6.0 uyumlu JavaScript kodu - güncel parametreleri garanti eder"""
-                    return """
-                    () => {
-                        console.log('🚦 Traffic Light butonuna tıklandı - parametreler alınıyor...');
-                        
-                        // Mevcut parametreleri DOM'dan güvenilir şekilde al
-                        let kavsak = 'Farabi';
-                        let kol = 'A';
-                        let saat = 14;
-                        
-                        // 1. Kavşak değerini al (map_trigger'dan)
-                        const kavsakInput = document.querySelector('#map_trigger textarea');
-                        if(kavsakInput && kavsakInput.value) {
-                            kavsak = kavsakInput.value.trim();
-                        }
-                        console.log('📍 Kavşak:', kavsak);
-                        
-                        // 2. Kol değerini al - Traffic Analysis sekmesindeki aktif dropdown'dan
-                        const allSelects = document.querySelectorAll('select');
-                        for(let i = allSelects.length - 1; i >= 0; i--) {
-                            const selectValue = allSelects[i].value;
-                            if(selectValue && selectValue.includes(' - ') && selectValue.match(/^[A-D] - /)) {
-                                kol = selectValue.split(' - ')[0];
-                                console.log('🔄 Kol bulundu:', kol, 'from:', selectValue);
-                                break;
-                            }
-                        }
-                        
-                        // 3. Saat değerini al - slider'dan
-                        const saatSlider = document.querySelector('input[type="range"]');
-                        if(saatSlider && saatSlider.value) {
-                            saat = parseInt(saatSlider.value);
-                        }
-                        console.log('⏰ Saat:', saat);
-                        
-                        // Kavşak eşleştirmesi
-                        const intersectionMapping = {
-                            "Emrah": "Gesi", "Farabi": "Gesi", "Yahya Kemal": "Gesi",
-                            "İldem 1": "İldem 1", "İldem 2": "İldem 2", "İldem 3": "İldem 3",
-                            "İldem 4": "İldem 4", "İldem 5": "İldem 5", "Serkent": "Serkent",
-                            "Beyazşehir": "Beyazşehir", "Toki": "Toki"
-                        };
-                        
-                        const mappedIntersection = intersectionMapping[kavsak] || "Gesi";
-                        console.log('🗺️ Mapped intersection:', mappedIntersection);
-                        
-                        // Tab'ı değiştir (Traffic Light Suggestion = 5. tab, index 4)
-                        const tabs = document.querySelectorAll('button[role="tab"]');
-                        if (tabs[4]) {
-                            console.log('📑 Tab değiştiriliyor...');
-                            tabs[4].click();
-                        }
-                        
-                        // Parametreleri form alanlarına doldur - sıralı işlem
-                        setTimeout(() => {
-                            console.log('🔄 Form alanları doldurulmaya başlanıyor...');
-                            
-                            // ADIM 1: Intersection Dropdown'ı seç
-                            const newDropdowns = document.querySelectorAll('select');
-                            let intersectionDropdown = null;
-                            
-                            for(let dropdown of newDropdowns) {
-                                const options = Array.from(dropdown.options).map(opt => opt.value);
-                                if(options.includes('Gesi') || options.includes('İldem 1')) {
-                                    intersectionDropdown = dropdown;
-                                    dropdown.value = mappedIntersection;
-                                    dropdown.dispatchEvent(new Event('change', { bubbles: true }));
-                                    console.log('✅ Intersection seçildi:', mappedIntersection);
-                                    break;
-                                }
-                            }
-                            
-                            // ADIM 2: ARM dropdown populate olmasını bekle ve seç
-                            setTimeout(() => {
-                                console.log('🔧 ARM dropdown kontrol ediliyor...');
-                                const updatedDropdowns = document.querySelectorAll('select');
-                                let armDropdown = null;
-                                let hourDropdown = null;
-                                
-                                for(let dropdown of updatedDropdowns) {
-                                    const options = Array.from(dropdown.options).map(opt => opt.value);
-                                    
-                                    // ARM dropdown - kol harfiyle eşleşen ilk seçeneği bul
-                                    if(!armDropdown && options.some(opt => opt.includes(' - '))) {
-                                        // Kol harfiyle başlayan ARM'ı bul
-                                        const matchedArm = options.find(opt => 
-                                            opt.includes(' - ') && opt.startsWith(kol + ' -')
-                                        );
-                                        
-                                        if(matchedArm) {
-                                            armDropdown = dropdown;
-                                            dropdown.value = matchedArm;
-                                            dropdown.dispatchEvent(new Event('change', { bubbles: true }));
-                                            console.log('✅ ARM seçildi:', matchedArm);
-                                        } else {
-                                            // Eşleşme yoksa ilk ARM'ı seç
-                                            const firstArm = options.find(opt => opt.includes(' - '));
-                                            if(firstArm) {
-                                                armDropdown = dropdown;
-                                                dropdown.value = firstArm;
-                                                dropdown.dispatchEvent(new Event('change', { bubbles: true }));
-                                                console.log('⚠️ Varsayılan ARM seçildi:', firstArm);
-                                            }
-                                        }
-                                    }
-                                    
-                                    // Hour dropdown
-                                    else if(!hourDropdown && (options.includes('7') || options.includes('14') || options.includes('17'))) {
-                                        hourDropdown = dropdown;
-                                        dropdown.value = saat.toString();
-                                        dropdown.dispatchEvent(new Event('change', { bubbles: true }));
-                                        console.log('✅ Hour seçildi:', saat);
-                                    }
-                                }
-                                
-                                // ADIM 3: Status mesajını güncelle
-                                setTimeout(() => {
-                                    const statusBoxes = document.querySelectorAll('textarea');
-                                    for(let box of statusBoxes) {
-                                        if(box.value && box.value.includes('Select intersection')) {
-                                            const selectedArm = armDropdown ? armDropdown.value.split(' - ')[0] : kol;
-                                            box.value = `✅ ${kavsak} kavşağı ${selectedArm} kolu için saat ${saat}:00 parametreleri YÜKLENDİ! ↓ CALCULATE SUGGESTION butonuna tıklayın.`;
-                                            box.dispatchEvent(new Event('input', { bubbles: true }));
-                                            console.log('✅ Status güncellendi');
-                                            break;
-                                        }
-                                    }
-                                    
-                                    console.log('🎯 Tüm parametreler başarıyla yüklendi!');
-                                }, 100);
-                                
-                            }, 600); // ARM populate olması için yeterli süre
-                            
-                        }, 300);
-                        
-                        return `🚦 ${kavsak} kavşağı ${kol} kolu saat ${saat}:00 → Traffic Light Suggestion!`;
-                    }
-                    """
-                
-                # JavaScript-only event (Gradio 6.0 uyumlu - inputs yok)
-                traffic_light_btn.click(
-                    fn=None,
-                    inputs=[],
-                    outputs=[],
-                    js=create_traffic_light_js()
+                with gr.Row(elem_classes="compact-row"):
+                    analyze_btn = gr.Button("ANALİZİ BAŞLAT", elem_classes="train-model-button")
+                    traffic_light_btn = gr.Button("SİNYALİZASYON ÖNERİSİ", elem_classes="select-button")
+
+                # --- Haritadan seçim (✅ data_type uyumlu) ---
+                map_trigger.change(
+                    fn=lambda kavsak, dt: (
+                        handle_map_selection_v2(kavsak, dt)[0],
+                        handle_map_selection_v2(kavsak, dt)[1],
+                        handle_map_selection_v2(kavsak, dt)[2],
+                        kavsak
+                    ),
+                    inputs=[map_trigger, current_data_type_state],
+                    outputs=[c_in, t_in, data_type_in, current_intersection_state]
                 )
 
-                # Sayfa yüklendiğinde ilk durumu çalıştır (analiz sekmesi için)
-                # Not: Gradio'da load eventi tüm app için çalışır, butonla tetiklemek daha güvenli olabilir ama burada load kullanıyoruz.
+                # --- data_type değişince tarihleri güncelle + state ---
+                data_type_in.change(
+                    fn=lambda dt, kavsak: (update_dates_by_data_type(dt, kavsak), dt),
+                    inputs=[data_type_in, map_trigger],
+                    outputs=[t_in, current_data_type_state]
+                )
 
+                # --- state update ---
+                t_in.change(lambda x: x, inputs=[t_in], outputs=[current_date_state])
+                s_in.change(lambda x: x, inputs=[s_in], outputs=[current_hour_state])
+                c_in.change(lambda x: x, inputs=[c_in], outputs=[current_arm_state])
+
+                analyze_btn.click(
+                    fn=update_dashboard,
+                    inputs=[map_trigger, t_in, s_in, c_in, data_type_in],
+                    outputs=[res1, res2, res3, res4, plot_out_analysis, c_in]
+                )
+
+        # =========================
+        # Traffic Light Suggestion
+        # =========================
         with gr.TabItem("Traffic Light Suggestion"):
-            # Sadece Traffic Light Suggestion sekmesi için Card UI (content-block) kullanılıyor.
             with gr.Column(elem_classes="content-block"):
-                gr.Markdown("<p class='block-title'>TRAFFIC LIGHT TIMING SUGGESTION</p>")
+                gr.Markdown("<p style='font-weight:700; color:#0f172a; text-align:center;'>TRAFFIC LIGHT TIMING SUGGESTION</p>")
                 suggestion_status = gr.Textbox(label="Status", interactive=False, value="Select intersection, arm, and hour to get traffic light suggestions.")
 
                 with gr.Row():
@@ -1045,20 +808,26 @@ with gr.Blocks(title="SmartTech AI Platform") as demo:
                         return gr.update(choices=list(INTERSECTIONS[intersection].keys()), value=None, interactive=True)
                     return gr.update(choices=[], value=None, interactive=False)
 
+                def update_tl_arms_with_value(intersection, target_arm=None):
+                    if intersection:
+                        available_arms = list(INTERSECTIONS[intersection].keys())
+                        value_to_set = target_arm if target_arm in available_arms else None
+                        return gr.update(choices=available_arms, value=value_to_set, interactive=True)
+                    return gr.update(choices=[], value=None, interactive=False)
+
                 def calculate_traffic_light_suggestion(intersection, arm, hour):
                     if not intersection or not arm or not hour:
                         return "Please select intersection, arm, and hour.", ""
                     try:
                         arm_letter = arm.split(" - ")[0] if " - " in arm else arm
-                        print(f"Running traffic_light.py for {intersection} - {arm_letter} at hour {hour}...")
                         result = subprocess.run(
                             ["python", str(TRAFFIC_LIGHT_PY), intersection, arm_letter, str(hour), str(EXCEL_FILE)],
                             capture_output=True, text=True, check=True, cwd=str(BASE_DIR)
                         )
-                        output_lines = result.stdout.strip().split('\n')
+                        output_lines = result.stdout.strip().split("\n")
                         for line in reversed(output_lines):
                             if line.startswith("📤 SONUÇ:"):
-                                values = line.replace("📤 SONUÇ:", "").strip().split(',')
+                                values = line.replace("📤 SONUÇ:", "").strip().split(",")
                                 if len(values) == 4:
                                     green, yellow, red, protection = values
                                     visual_html = generate_traffic_light_html(green, yellow, red, protection)
@@ -1069,16 +838,62 @@ with gr.Blocks(title="SmartTech AI Platform") as demo:
                         return f"❌ Error:\n{traceback.format_exc()}", ""
 
                 tl_intersection_dd.change(update_tl_arms, inputs=tl_intersection_dd, outputs=tl_arm_dd)
-                calculate_btn.click(calculate_traffic_light_suggestion, inputs=[tl_intersection_dd, tl_arm_dd, tl_hour_dd], outputs=[suggestion_status, traffic_light_visual])
+                calculate_btn.click(calculate_traffic_light_suggestion, inputs=[tl_intersection_dd, tl_arm_dd, tl_hour_dd],
+                                    outputs=[suggestion_status, traffic_light_visual])
 
-    # 2. Footer Section
+                # --- Transfer (Traffic Analysis -> Traffic Light Suggestion) ---
+                temp_intersection = gr.State()
+                temp_arm = gr.State()
+
+                def transfer_to_traffic_light_state_based(intersection_state, hour_state, arm_state):
+                    kavsak = intersection_state if intersection_state else "Farabi"
+                    kol = arm_state if arm_state else ANALYSIS_INTERSECTIONS.get(kavsak, ["A - OSMAN ÖZCAN CAD."])[0]
+                    saat = hour_state if hour_state is not None else 14
+
+                    intersection_mapping = {
+                        "Emrah": "Gesi", "Farabi": "Gesi", "Yahya Kemal": "Gesi",
+                        "İldem 1": "İldem 1", "İldem 2": "İldem 2", "İldem 3": "İldem 3",
+                        "İldem 4": "İldem 4", "İldem 5": "İldem 5",
+                        "Serkent": "Serkent", "Beyazşehir": "Beyazşehir", "Toki": "Toki"
+                    }
+                    mapped_intersection = intersection_mapping.get(kavsak, "Beyazşehir")
+                    arm_letter = str(kol).split(" - ")[0] if " - " in str(kol) else "A"
+
+                    available_arms = list(INTERSECTIONS.get(mapped_intersection, {}).keys())
+                    matched_arm = next((a for a in available_arms if a.startswith(arm_letter)), available_arms[0] if available_arms else None)
+
+                    valid_hours = [7, 14, 17]
+                    hour_val = int(saat) if str(saat).isdigit() else 14
+                    if hour_val not in valid_hours:
+                        hour_val = min(valid_hours, key=lambda x: abs(x - hour_val))
+
+                    msg = f"🎉 {kavsak} kavşağı {matched_arm} kolu saat {hour_val}:00 parametreleri aktarıldı!"
+                    return (
+                        gr.update(value=mapped_intersection),
+                        gr.update(value=hour_val),
+                        msg,
+                        mapped_intersection,
+                        matched_arm
+                    )
+
+                def update_arm_after_transfer(intersection, target_arm):
+                    return update_tl_arms_with_value(intersection, target_arm)
+
+                traffic_light_btn.click(
+                    fn=transfer_to_traffic_light_state_based,
+                    inputs=[current_intersection_state, current_hour_state, current_arm_state],
+                    outputs=[tl_intersection_dd, tl_hour_dd, suggestion_status, temp_intersection, temp_arm],
+                    js="() => { const tabs = document.querySelectorAll('button[role=\"tab\"]'); if (tabs[4]) { tabs[4].click(); } }"
+                ).then(
+                    fn=update_arm_after_transfer,
+                    inputs=[temp_intersection, temp_arm],
+                    outputs=[tl_arm_dd]
+                )
+
     gr.HTML(footer_html)
 
-# Launch
-demo.launch(allowed_paths=[str(BASE_DIR), str(BASE_DIR.parent)], share=True, debug=True, css=css_styles)
+demo.launch(allowed_paths=[str(BASE_DIR), str(BASE_DIR.parent)], share=True, debug=True)
 
-# Colab'da sürekli çalışması için sonsuz döngü
-import time
 try:
     while True:
         time.sleep(1)
