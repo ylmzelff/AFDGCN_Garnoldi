@@ -29,7 +29,7 @@ TEST_GAR = BASE_DIR / "test_gar.csv"
 PLOT_PY = BASE_DIR / "plot.py"
 PRED_CSV = BASE_DIR / "pred_csv.py"
 PLOT_IMG = BASE_DIR / "traffic_flow_zoomed.png"
-TRAFFIC_LIGHT_PY = "/content/AFDGCN_Garnoldi/traffic_light.py"
+TRAFFIC_LIGHT_PY = BASE_DIR / "traffic_light.py"
 EXCEL_FILE = BASE_DIR / "gesi_kavşak_raporları.xlsx"
 
 # Logonun doğru yolları
@@ -43,7 +43,6 @@ ANALYSIS_INTERSECTIONS = {
     "Emrah": ["A - EMRAH CAD. KUZEY", "B - KIZILIRMAK CAD DOĞU", "C - EMRAH CAD GÜNEY", "D - KIZILIRMAK CAD BATI"],
     "Farabi": ["A - FARABİ CAD KUZEY", "B - KIZILIRMAK CAD DOĞU", "C - FARABİ CAD GÜNEY", "D - KIZILIRMAK CAD BATI"],
     "Yahya Kemal": ["A - YAHYA KEMAL CAD. KUZEY", "B - KIZILIRMAK CAD DOĞU", "C - YAHYA KEMAL CAD. GÜNEY", "D - KIZILIRMAK CAD BATI"],
-    "Gesi": ["A - SİVAS BULVARI-SİVAS YÖNÜ", "B - GESİ CAD.", "C - SİVAS BULV - ŞEHİR MERKEZİ", "D - 381. SOKAK"],
     "İldem 1": ["A - DİNÇER SOKAK", "B - ALPARSLANTÜRKEŞ BUL.", "D - GESİ CAD"],
     "İldem 2": ["A - DİNÇER SOKAK KUZEY", "B - HANEDAN SOKAK", "C - DİNÇER SOKAK GÜNEY", "D - FETİH SOKAK"],
     "İldem 3": ["A - DÜNDAR TAŞER CAD. KUZEY", "C - DÜNDAR TAŞER CAD. GÜNEY", "D - HANEDAN SOKAK"],
@@ -64,7 +63,6 @@ KIZILIRMAK_LIST = ["Emrah", "Farabi", "Yahya Kemal"]
 
 ANALYSIS_COORDS = {
     "Emrah": [38.725, 35.485], "Farabi": [38.728, 35.490], "Yahya Kemal": [38.730, 35.495],
-    "Gesi": [38.777174902567886, 35.57388774400878],
     "İldem 1": [38.756, 35.590], "İldem 2": [38.758, 35.595], "İldem 3": [38.760, 35.600],
     "İldem 4": [38.762, 35.605], "İldem 5": [38.764, 35.610], "Serkent": [38.768, 35.570],
     "Beyazşehir": [38.760, 35.560], "Toki": [38.775, 35.580]
@@ -102,8 +100,8 @@ def get_base64_image_tag(image_path: Path, max_height: int = 90) -> str:
 # ==========================================
 def get_kizilirmak_counts(kavsak, kol_full, tarih, saat):
     # dosya isimleri birebir
-    KIZILIRMAK_REAL = str("/content/AFDGCN_Garnoldi/kizilirmak_gerçek.xlsx")
-    KIZILIRMAK_PRED = str("/content/AFDGCN_Garnoldi/kizilirmak_tahmin.xlsx")
+    KIZILIRMAK_REAL = str(BASE_DIR / "kizilirmak_gerçek.xlsx")
+    KIZILIRMAK_PRED = str(BASE_DIR / "kizilirmak_tahmin.xlsx")
     try:
         harf = kol_full.split(" - ")[0]
         col_idx = {"A": 3, "B": 4, "C": 5, "D": 6}.get(harf, 3)
@@ -134,28 +132,47 @@ def get_kizilirmak_counts(kavsak, kol_full, tarih, saat):
         return 0, 0
 
 def get_ildem_counts(kavsak, kol, tarih, saat, data_type="karlı gün verisi(şubat)"):
-    # dosya isimleri birebir
+    # Use BASE_DIR paths and search for a matching sheet name (case-insensitive)
     file_mapping = {
-        "karlı gün verisi(şubat)": (str("/content/AFDGCN_Garnoldi/şubat_gerçek.xlsx"), str("/content/AFDGCN_Garnoldi/şubat_tahmin.xlsx")),
-        "karlı gün verisi(ocak)": (str("/content/AFDGCN_Garnoldi/ocak_gerçek.xlsx"), str("/content/AFDGCN_Garnoldi/ocak_tahmin.xlsx")),
-        "normal veri(kasım)": (str("/content/AFDGCN_Garnoldi/kasım_gerçek.xlsx"), str("/content/AFDGCN_Garnoldi/kasım_tahmin.xlsx"))
+        "karlı gün verisi(şubat)": (str(BASE_DIR / "şubat_gerçek.xlsx"), str(BASE_DIR / "şubat_tahmin.xlsx")),
+        "karlı gün verisi(ocak)": (str(BASE_DIR / "ocak_gerçek.xlsx"), str(BASE_DIR / "ocak_tahmin.xlsx")),
+        "normal veri(kasım)": (str(BASE_DIR / "kasım_gerçek.xlsx"), str(BASE_DIR / "kasım_tahmin.xlsx"))
     }
 
     ILDEM_REAL, ILDEM_PRED = file_mapping.get(data_type, file_mapping["karlı gün verisi(şubat)"])
     h_prefix = f"{int(saat):02d}:"
     try:
-        df_real = pd.read_excel(ILDEM_REAL, sheet_name=kavsak, header=2).copy()
+        # Try to find a sheet that matches the kavsak name (case-insensitive substring)
+        xl_real = pd.ExcelFile(ILDEM_REAL)
+        target_sheet = next((s for s in xl_real.sheet_names if kavsak.strip().lower() in s.strip().lower()), None)
+        if target_sheet is None:
+            # fallback: try exact match (some files may use slightly different names)
+            target_sheet = kavsak
+
+        df_real = pd.read_excel(ILDEM_REAL, sheet_name=target_sheet, header=2).copy()
         df_real.columns = [str(c).strip() for c in df_real.columns]
         df_real.iloc[:, 0] = pd.to_datetime(df_real.iloc[:, 0], errors="coerce").dt.strftime("%d.%m.%Y")
         r_mask = (df_real.iloc[:, 0] == tarih) & (df_real.iloc[:, 1].astype(str).str.startswith(h_prefix))
-        v_real = int(pd.to_numeric(df_real[r_mask][kol], errors="coerce").fillna(0).sum())
+        # If requested column not present, return zeros
+        if kol not in df_real.columns:
+            v_real = 0
+        else:
+            v_real = int(pd.to_numeric(df_real[r_mask][kol], errors='coerce').fillna(0).sum())
 
-        df_pred = pd.read_excel(ILDEM_PRED, sheet_name=kavsak, header=2).copy()
+        xl_pred = pd.ExcelFile(ILDEM_PRED)
+        target_sheet_p = next((s for s in xl_pred.sheet_names if kavsak.strip().lower() in s.strip().lower()), None)
+        if target_sheet_p is None:
+            target_sheet_p = target_sheet
+        df_pred = pd.read_excel(ILDEM_PRED, sheet_name=target_sheet_p, header=2).copy()
         df_pred.columns = [str(c).strip() for c in df_pred.columns]
         p_mask = (df_pred.iloc[:, 0] == tarih) & (df_pred.iloc[:, 1].astype(str).str.startswith(h_prefix))
-        v_pred = int(pd.to_numeric(df_pred[p_mask][kol], errors="coerce").fillna(0).sum())
+        if kol not in df_pred.columns:
+            v_pred = 0
+        else:
+            v_pred = int(pd.to_numeric(df_pred[p_mask][kol], errors='coerce').fillna(0).sum())
+
         return v_real, v_pred
-    except:
+    except Exception:
         return 0, 0
 
 # ==========================================
@@ -254,17 +271,8 @@ def handle_map_selection_v2(kavsak, current_data_type):
         dates = DATES_KIZILIRMAK
         return (
             gr.update(choices=choices, value=choices[0] if choices else None),  # c_in
-            gr.update(choices=dates, value=dates[0] if choices else None),        # t_in
-            gr.update(visible=False)                                            # data_type_in
-        )
-    elif kavsak == "Gesi":
-        # Gesi tüm veri tiplerini destekliyor (kasım, ocak, şubat)
-        dt = current_data_type if current_data_type in DATES_ILDEM else "normal veri(kasım)"
-        dates = DATES_ILDEM.get(dt, DATES_ILDEM["normal veri(kasım)"])
-        return (
-            gr.update(choices=choices, value=choices[0] if choices else None),  # c_in
             gr.update(choices=dates, value=dates[0] if dates else None),        # t_in
-            gr.update(visible=True, value=dt)                                   # data_type_in
+            gr.update(visible=False)                                            # data_type_in
         )
     else:
         dt = current_data_type if current_data_type in DATES_ILDEM else "karlı gün verisi(şubat)"
@@ -736,12 +744,6 @@ with gr.Blocks(title="SmartTech AI Platform", css=css_styles) as demo:
                         map_trigger = gr.Textbox(label="Lokasyon", elem_id="map_trigger", value="Beyazşehir")
                         gr.HTML(value=create_map())
 
-                        # State variables to track current selections
-                        current_intersection_state = gr.State(value="Beyazşehir")
-                        current_hour_state = gr.State(value=14)
-                        current_arm_state = gr.State(value=ANALYSIS_INTERSECTIONS.get("Beyazşehir", [None])[0])
-                        current_data_type_state = gr.State(value="normal veri(kasım)")
-
                         with gr.Row(elem_classes="compact-row"):
                             data_type_in = gr.Dropdown(
                                 choices=["karlı gün verisi(şubat)", "karlı gün verisi(ocak)", "normal veri(kasım)"],
@@ -796,10 +798,9 @@ with gr.Blocks(title="SmartTech AI Platform", css=css_styles) as demo:
                 )
 
                 # --- state update ---
-                map_trigger.change(lambda x: x, inputs=[map_trigger], outputs=[current_intersection_state])
+                t_in.change(lambda x: x, inputs=[t_in], outputs=[current_date_state])
                 s_in.change(lambda x: x, inputs=[s_in], outputs=[current_hour_state])
                 c_in.change(lambda x: x, inputs=[c_in], outputs=[current_arm_state])
-                data_type_in.change(lambda x: x, inputs=[data_type_in], outputs=[current_data_type_state])
 
                 analyze_btn.click(
                     fn=update_dashboard,
@@ -835,31 +836,15 @@ with gr.Blocks(title="SmartTech AI Platform", css=css_styles) as demo:
                         return gr.update(choices=available_arms, value=value_to_set, interactive=True)
                     return gr.update(choices=[], value=None, interactive=False)
 
-                def calculate_traffic_light_suggestion(intersection, arm, hour, data_type="normal veri(kasım)"):
+                def calculate_traffic_light_suggestion(intersection, arm, hour):
                     if not intersection or not arm or not hour:
                         return "Please select intersection, arm, and hour.", ""
                     try:
-                        # Select Excel file based on data type
-                        excel_mapping = {
-                            "karlı gün verisi(şubat)": "/content/AFDGCN_Garnoldi/şubat_tahmin.xlsx",
-                            "karlı gün verisi(ocak)": "/content/AFDGCN_Garnoldi/ocak_tahmin.xlsx",
-                            "normal veri(kasım)": "/content/AFDGCN_Garnoldi/kasım_tahmin.xlsx"
-                        }
-                        excel_file = excel_mapping.get(data_type, "/content/AFDGCN_Garnoldi/kasım_tahmin.xlsx")
-                        
                         arm_letter = arm.split(" - ")[0] if " - " in arm else arm
                         result = subprocess.run(
-                            ["python", str(TRAFFIC_LIGHT_PY), intersection, arm_letter, str(hour), str(excel_file)],
-                            capture_output=True, text=True, check=False, cwd=str(BASE_DIR)
+                            ["python", str(TRAFFIC_LIGHT_PY), intersection, arm_letter, str(hour), str(EXCEL_FILE)],
+                            capture_output=True, text=True, check=True, cwd=str(BASE_DIR)
                         )
-                        
-                        # Check for errors
-                        if result.returncode != 0:
-                            error_msg = f"❌ traffic_light.py failed with exit code {result.returncode}\n\n"
-                            error_msg += f"STDOUT:\n{result.stdout}\n\n"
-                            error_msg += f"STDERR:\n{result.stderr}"
-                            return error_msg, ""
-                        
                         output_lines = result.stdout.strip().split("\n")
                         for line in reversed(output_lines):
                             if line.startswith("📤 SONUÇ:"):
@@ -867,31 +852,27 @@ with gr.Blocks(title="SmartTech AI Platform", css=css_styles) as demo:
                                 if len(values) == 4:
                                     green, yellow, red, protection = values
                                     visual_html = generate_traffic_light_html(green, yellow, red, protection)
-                                    return (f"✅ Suggestions calculated for {intersection} - {arm} at {hour}:00 ({data_type})", visual_html)
+                                    return (f"✅ Suggestions calculated for {intersection} - {arm} at {hour}:00", visual_html)
                         return f"⚠️ Unexpected output from traffic_light.py:\n{result.stdout}", ""
                     except Exception as e:
                         import traceback
                         return f"❌ Error:\n{traceback.format_exc()}", ""
 
-                # Store data type for traffic light calculation
-                tl_data_type_state = gr.State(value="normal veri(kasım)")
-                
                 tl_intersection_dd.change(update_tl_arms, inputs=tl_intersection_dd, outputs=tl_arm_dd)
-                calculate_btn.click(calculate_traffic_light_suggestion, inputs=[tl_intersection_dd, tl_arm_dd, tl_hour_dd, tl_data_type_state],
+                calculate_btn.click(calculate_traffic_light_suggestion, inputs=[tl_intersection_dd, tl_arm_dd, tl_hour_dd],
                                     outputs=[suggestion_status, traffic_light_visual])
 
                 # --- Transfer (Traffic Analysis -> Traffic Light Suggestion) ---
                 temp_intersection = gr.State()
                 temp_arm = gr.State()
 
-                def transfer_to_traffic_light_state_based(intersection_state, hour_state, arm_state, data_type_state):
+                def transfer_to_traffic_light_state_based(intersection_state, hour_state, arm_state):
                     kavsak = intersection_state if intersection_state else "Farabi"
                     kol = arm_state if arm_state else ANALYSIS_INTERSECTIONS.get(kavsak, ["A - OSMAN ÖZCAN CAD."])[0]
                     saat = hour_state if hour_state is not None else 14
-                    data_type = data_type_state if data_type_state else "normal veri(kasım)"
 
                     intersection_mapping = {
-                        "Emrah": "Gesi", "Farabi": "Gesi", "Yahya Kemal": "Gesi", "Gesi": "Gesi",
+                        "Emrah": "Gesi", "Farabi": "Gesi", "Yahya Kemal": "Gesi",
                         "İldem 1": "İldem 1", "İldem 2": "İldem 2", "İldem 3": "İldem 3",
                         "İldem 4": "İldem 4", "İldem 5": "İldem 5",
                         "Serkent": "Serkent", "Beyazşehir": "Beyazşehir", "Toki": "Toki"
@@ -907,14 +888,13 @@ with gr.Blocks(title="SmartTech AI Platform", css=css_styles) as demo:
                     if hour_val not in valid_hours:
                         hour_val = min(valid_hours, key=lambda x: abs(x - hour_val))
 
-                    msg = f"🎉 {kavsak} kavşağı {matched_arm} kolu saat {hour_val}:00 ({data_type}) parametreleri aktarıldı!"
+                    msg = f"🎉 {kavsak} kavşağı {matched_arm} kolu saat {hour_val}:00 parametreleri aktarıldı!"
                     return (
                         gr.update(value=mapped_intersection),
                         gr.update(value=hour_val),
                         msg,
                         mapped_intersection,
-                        matched_arm,
-                        data_type
+                        matched_arm
                     )
 
                 def update_arm_after_transfer(intersection, target_arm):
@@ -922,8 +902,8 @@ with gr.Blocks(title="SmartTech AI Platform", css=css_styles) as demo:
 
                 traffic_light_btn.click(
                     fn=transfer_to_traffic_light_state_based,
-                    inputs=[current_intersection_state, current_hour_state, current_arm_state, current_data_type_state],
-                    outputs=[tl_intersection_dd, tl_hour_dd, suggestion_status, temp_intersection, temp_arm, tl_data_type_state],
+                    inputs=[current_intersection_state, current_hour_state, current_arm_state],
+                    outputs=[tl_intersection_dd, tl_hour_dd, suggestion_status, temp_intersection, temp_arm],
                     js="() => { const tabs = document.querySelectorAll('button[role=\"tab\"]'); if (tabs[4]) { tabs[4].click(); } }"
                 ).then(
                     fn=update_arm_after_transfer,
