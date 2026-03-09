@@ -13,24 +13,29 @@ pred_data_path = r"./test_gar.csv"
 df_pred = pd.read_csv(pred_data_path, skiprows=1, header=None, names=['timestep', 'location', 'flow', 'occupy', 'speed'])
 
 # Define Parameters
-start_date = pd.Timestamp("2016-07-30 23:55")  # 8641st timestep (1 month prediction)
+start_date = pd.Timestamp("2026-01-17 09:50")  # 8641st timestep (1 month prediction)
+#26.11.2025	05:00
+#17.01.2026	09:50 ocak
+#23.02.2025	05:00 şubat
+
+
 
 # Time interval details
-time_interval = 5  # Time interval in minutes (PEMS08 standard)
+time_interval = 10  # Time interval in minutes (PEMS08 standard)
 daily_time_steps = int((24 * 60) / time_interval)  # Number of timesteps per day
-test_time_steps = 8647  # Number of test timesteps (1 month)
+test_time_steps = 949  # Number of test timesteps (1 month)
 
 # Extract relevant test data
-df_pred_location = df_pred[df_pred['location'] == 42].iloc[-test_time_steps:]
-df_real_period = df_real[df_real['location'] == 42].iloc[-test_time_steps:]
+df_pred_location = df_pred[df_pred['location'] == 0].iloc[-test_time_steps:]
+df_real_period = df_real[df_real['location'] == 0].iloc[-test_time_steps:]
 
 # Generate Time Steps
 time_steps_pred = [start_date + pd.Timedelta(minutes=time_interval * i) for i in range(len(df_pred_location))]
 time_steps_real = [start_date + pd.Timedelta(minutes=time_interval * i) for i in range(len(df_real_period))]
 
 # Define zoom range based on date and hour
-zoom_start_date = pd.Timestamp("2016-08-29 03:00")  # LAST day morning
-zoom_end_date = pd.Timestamp("2016-08-29 12:00")    # LAST day evening
+zoom_start_date = pd.Timestamp("2026-01-19 10:00")  # LAST day morning
+zoom_end_date = pd.Timestamp("2026-01-19 22:00")    # LAST day evening
 
 zoom_start = next((i for i, t in enumerate(time_steps_real) if t >= zoom_start_date), 0)
 zoom_end = next((i for i, t in enumerate(time_steps_real) if t >= zoom_end_date), len(time_steps_real) - 1)
