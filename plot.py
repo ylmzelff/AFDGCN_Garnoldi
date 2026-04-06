@@ -13,7 +13,7 @@ df_pred = pd.read_csv("./test_gar.csv", skiprows=1, header=None,
 
 # Parameters
 start_date = pd.Timestamp("2025-06-01 00:00")
-time_interval = 10  # minutes
+time_interval = 60  # minutes
 
 # Intersection and arm names for each location_id
 intersection_arm_names = [

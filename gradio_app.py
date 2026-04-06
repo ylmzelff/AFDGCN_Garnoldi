@@ -10,12 +10,12 @@ import tempfile
 import plotly.graph_objects as go
 import folium
 import warnings
-import time  # <-- eksikti, eklendi
+import time
 
 warnings.filterwarnings('ignore', category=FutureWarning)
 
 # === Paths ===
-BASE_DIR = Path().absolute()  # Current directory
+BASE_DIR = Path().absolute()
 DATA_DIR = BASE_DIR / "data" / "Kayseri"
 CONFIG_PY = BASE_DIR / "config.py"
 LOAD_DATASET = BASE_DIR / "lib" / "load_dataset.py"
@@ -29,20 +29,20 @@ TEST_GAR = BASE_DIR / "test_gar.csv"
 PLOT_PY = BASE_DIR / "plot.py"
 PRED_CSV = BASE_DIR / "pred_csv.py"
 PLOT_IMG = BASE_DIR / "traffic_flow_zoomed.png"
-TRAFFIC_LIGHT_PY = BASE_DIR / "traffic_light.py"
+TRAFFIC_LIGHT_PY = str(BASE_DIR / "traffic_light.py")
 EXCEL_FILE = BASE_DIR / "gesi_kavşak_raporları.xlsx"
 
-# Logonun doğru yolları
 KAYSERI_ULASIM_LOGO_PATH = BASE_DIR / "kayseri_ulaşım.png"
 SMARTTECH_LOGO_PATH = BASE_DIR / "smarttecl_logo.png"
 
 # ==========================================
-# 1) ANALYSIS.PY MANTIĞI VE VERİLERİ (AYNEN)
+# 1) ANALYSIS.PY MANTIĞI VE VERİLERİ
 # ==========================================
 ANALYSIS_INTERSECTIONS = {
     "Emrah": ["A - EMRAH CAD. KUZEY", "B - KIZILIRMAK CAD DOĞU", "C - EMRAH CAD GÜNEY", "D - KIZILIRMAK CAD BATI"],
     "Farabi": ["A - FARABİ CAD KUZEY", "B - KIZILIRMAK CAD DOĞU", "C - FARABİ CAD GÜNEY", "D - KIZILIRMAK CAD BATI"],
     "Yahya Kemal": ["A - YAHYA KEMAL CAD. KUZEY", "B - KIZILIRMAK CAD DOĞU", "C - YAHYA KEMAL CAD. GÜNEY", "D - KIZILIRMAK CAD BATI"],
+    "Gesi": ["A - SİVAS BULVARI-SİVAS YÖNÜ", "B - GESİ CAD.", "C - SİVAS BULV - ŞEHİR MERKEZİ", "D - 381. SOKAK"],
     "İldem 1": ["A - DİNÇER SOKAK", "B - ALPARSLANTÜRKEŞ BUL.", "D - GESİ CAD"],
     "İldem 2": ["A - DİNÇER SOKAK KUZEY", "B - HANEDAN SOKAK", "C - DİNÇER SOKAK GÜNEY", "D - FETİH SOKAK"],
     "İldem 3": ["A - DÜNDAR TAŞER CAD. KUZEY", "C - DÜNDAR TAŞER CAD. GÜNEY", "D - HANEDAN SOKAK"],
@@ -63,12 +63,12 @@ KIZILIRMAK_LIST = ["Emrah", "Farabi", "Yahya Kemal"]
 
 ANALYSIS_COORDS = {
     "Emrah": [38.725, 35.485], "Farabi": [38.728, 35.490], "Yahya Kemal": [38.730, 35.495],
+    "Gesi": [38.777174902567886, 35.57388774400878],
     "İldem 1": [38.756, 35.590], "İldem 2": [38.758, 35.595], "İldem 3": [38.760, 35.600],
     "İldem 4": [38.762, 35.605], "İldem 5": [38.764, 35.610], "Serkent": [38.768, 35.570],
     "Beyazşehir": [38.760, 35.560], "Toki": [38.775, 35.580]
 }
 
-# Plot tab için eski dictionary
 INTERSECTIONS = {
     "Gesi": {"A - SİVAS BULVARI-SİVAS YÖNÜ": 0, "B - GESİ CAD.": 1, "C - SİVAS BULV - ŞEHİR MERKEZİ": 2, "D - 381. SOKAK": 3},
     "Serkent": {"A - 822. SK": 4, "B - GESİ CAD. DOĞU": 5, "C - KOCASİNAN CAD.": 6, "D - GESİ CAD. BATI": 7},
@@ -81,10 +81,8 @@ INTERSECTIONS = {
     "İldem 5": {"A - S.A BEDUK CAD. KUZEY": 30, "B - VATAN SOKAK BATI": 31, "C - S.A BEDUK CAD. GÜNEY": 32, "D - VATAN SOKAK DOĞU": 33}
 }
 
-# --- Logo helper ---
 def get_base64_image_tag(image_path: Path, max_height: int = 90) -> str:
     if not image_path.exists():
-        print(f"Warning: Image not found at {image_path}")
         return ""
     with Image.open(image_path) as img:
         if img.height > max_height:
@@ -96,10 +94,10 @@ def get_base64_image_tag(image_path: Path, max_height: int = 90) -> str:
         return f"data:image/png;base64,{img_b64}"
 
 # ==========================================
-# 2) VERİ HESAPLAMA (İLK KODLA BİREBİR)
+# 2) VERİ HESAPLAMA - DÜZELTİLMİŞ
 # ==========================================
 def get_kizilirmak_counts(kavsak, kol_full, tarih, saat):
-    # dosya isimleri birebir
+    """Kızılırmak veri okuma"""
     KIZILIRMAK_REAL = str(BASE_DIR / "kizilirmak_gerçek.xlsx")
     KIZILIRMAK_PRED = str(BASE_DIR / "kizilirmak_tahmin.xlsx")
     try:
@@ -126,13 +124,20 @@ def get_kizilirmak_counts(kavsak, kol_full, tarih, saat):
             axis=1
         )
         v_pred = int(pd.to_numeric(df_pred[mask_p].iloc[:, col_idx], errors="coerce").fillna(0).sum())
-
         return v_real, v_pred
     except:
         return 0, 0
 
+def find_header_row(file_path, sheet_name):
+    """Excel'de 'Tarih' içeren header satırını dinamik bul"""
+    df_temp = pd.read_excel(file_path, sheet_name=sheet_name, header=None, nrows=10)
+    for idx, row in df_temp.iterrows():
+        if any('Tarih' in str(cell) for cell in row):
+            return idx
+    return 2  # Default
+
 def get_ildem_counts(kavsak, kol, tarih, saat, data_type="karlı gün verisi(şubat)"):
-    # Use BASE_DIR paths and search for a matching sheet name (case-insensitive)
+    """Geliştirilmiş İldem veri okuma - Dinamik header + güçlü tarih parse"""
     file_mapping = {
         "karlı gün verisi(şubat)": (str(BASE_DIR / "şubat_gerçek.xlsx"), str(BASE_DIR / "şubat_tahmin.xlsx")),
         "karlı gün verisi(ocak)": (str(BASE_DIR / "ocak_gerçek.xlsx"), str(BASE_DIR / "ocak_tahmin.xlsx")),
@@ -141,38 +146,70 @@ def get_ildem_counts(kavsak, kol, tarih, saat, data_type="karlı gün verisi(şu
 
     ILDEM_REAL, ILDEM_PRED = file_mapping.get(data_type, file_mapping["karlı gün verisi(şubat)"])
     h_prefix = f"{int(saat):02d}:"
+
     try:
-        # Try to find a sheet that matches the kavsak name (case-insensitive substring)
-        xl_real = pd.ExcelFile(ILDEM_REAL)
-        target_sheet = next((s for s in xl_real.sheet_names if kavsak.strip().lower() in s.strip().lower()), None)
-        if target_sheet is None:
-            # fallback: try exact match (some files may use slightly different names)
-            target_sheet = kavsak
-
-        df_real = pd.read_excel(ILDEM_REAL, sheet_name=target_sheet, header=2).copy()
+        # GERÇEK VERİ - Dinamik header
+        header_row_real = find_header_row(ILDEM_REAL, kavsak)
+        df_real = pd.read_excel(ILDEM_REAL, sheet_name=kavsak, header=header_row_real).copy()
         df_real.columns = [str(c).strip() for c in df_real.columns]
-        df_real.iloc[:, 0] = pd.to_datetime(df_real.iloc[:, 0], errors="coerce").dt.strftime("%d.%m.%Y")
-        r_mask = (df_real.iloc[:, 0] == tarih) & (df_real.iloc[:, 1].astype(str).str.startswith(h_prefix))
-        # If requested column not present, return zeros
-        if kol not in df_real.columns:
-            v_real = 0
-        else:
-            v_real = int(pd.to_numeric(df_real[r_mask][kol], errors='coerce').fillna(0).sum())
 
-        xl_pred = pd.ExcelFile(ILDEM_PRED)
-        target_sheet_p = next((s for s in xl_pred.sheet_names if kavsak.strip().lower() in s.strip().lower()), None)
-        if target_sheet_p is None:
-            target_sheet_p = target_sheet
-        df_pred = pd.read_excel(ILDEM_PRED, sheet_name=target_sheet_p, header=2).copy()
-        df_pred.columns = [str(c).strip() for c in df_pred.columns]
-        p_mask = (df_pred.iloc[:, 0] == tarih) & (df_pred.iloc[:, 1].astype(str).str.startswith(h_prefix))
-        if kol not in df_pred.columns:
-            v_pred = 0
+        # Kolon kontrolü
+        if kol not in df_real.columns:
+            similar = [c for c in df_real.columns if kol.split("-")[0].strip() in c]
+            if similar:
+                kol = similar[0]
+            else:
+                return 0, 0
+
+        # Tarih parse
+        if pd.api.types.is_datetime64_any_dtype(df_real.iloc[:, 0]):
+            df_real['date_only'] = df_real.iloc[:, 0].dt.normalize()
         else:
-            v_pred = int(pd.to_numeric(df_pred[p_mask][kol], errors='coerce').fillna(0).sum())
+            try:
+                df_real['date_parsed'] = pd.to_datetime(df_real.iloc[:, 0], format='%d.%m.%Y', errors='coerce')
+            except:
+                df_real['date_parsed'] = pd.NaT
+            if df_real['date_parsed'].isna().all():
+                df_real['date_parsed'] = pd.to_datetime(df_real.iloc[:, 0], dayfirst=True, errors='coerce')
+            df_real['date_only'] = df_real['date_parsed'].dt.normalize()
+
+        # Target tarih
+        d, m, y = tarih.split(".")
+        target_date = pd.Timestamp(year=int(y), month=int(m), day=int(d))
+
+        r_mask = (df_real['date_only'] == target_date.normalize()) & \
+                 (df_real.iloc[:, 1].astype(str).str.startswith(h_prefix))
+        v_real = int(pd.to_numeric(df_real[r_mask][kol], errors="coerce").fillna(0).sum())
+
+        # TAHMİN VERİ - Dinamik header
+        header_row_pred = find_header_row(ILDEM_PRED, kavsak)
+        df_pred = pd.read_excel(ILDEM_PRED, sheet_name=kavsak, header=header_row_pred).copy()
+        df_pred.columns = [str(c).strip() for c in df_pred.columns]
+
+        if kol not in df_pred.columns:
+            similar = [c for c in df_pred.columns if kol.split("-")[0].strip() in c]
+            if similar:
+                kol = similar[0]
+
+        # Tarih parse
+        if pd.api.types.is_datetime64_any_dtype(df_pred.iloc[:, 0]):
+            df_pred['date_only'] = df_pred.iloc[:, 0].dt.normalize()
+        else:
+            try:
+                df_pred['date_parsed'] = pd.to_datetime(df_pred.iloc[:, 0], format='%d.%m.%Y', errors='coerce')
+            except:
+                df_pred['date_parsed'] = pd.NaT
+            if df_pred['date_parsed'].isna().all():
+                df_pred['date_parsed'] = pd.to_datetime(df_pred.iloc[:, 0], dayfirst=True, errors='coerce')
+            df_pred['date_only'] = df_pred['date_parsed'].dt.normalize()
+
+        p_mask = (df_pred['date_only'] == target_date.normalize()) & \
+                 (df_pred.iloc[:, 1].astype(str).str.startswith(h_prefix))
+        v_pred = int(pd.to_numeric(df_pred[p_mask][kol], errors="coerce").fillna(0).sum())
 
         return v_real, v_pred
-    except Exception:
+    except Exception as e:
+        print(f"Error in get_ildem_counts: {e}")
         return 0, 0
 
 # ==========================================
@@ -210,8 +247,6 @@ def update_dashboard(kavsak, tarih, saat, kol, data_type="karlı gün verisi(şu
         real_v, pred_v = get_ildem_counts(kavsak, kol, tarih, saat, data_type)
 
     diff = abs(real_v - pred_v)
-    # Direct percentage: show accuracy as (1 - |real - pred|/real) * 100
-    # If real_v is zero, set accuracy to 0 to avoid misleading 100% fallback
     acc = (1 - (diff / real_v)) * 100 if real_v > 0 else 0
 
     if acc >= 85:
@@ -221,7 +256,6 @@ def update_dashboard(kavsak, tarih, saat, kol, data_type="karlı gün verisi(şu
     else:
         confidence_color = "#f39c12"
 
-    # Format accuracy percentage (clamp between 0 and 100)
     confidence_display = f"{max(0, min(acc, 100)):.1f}%"
 
     arm_labels = [a.split(" - ")[0] for a in v_arms]
@@ -264,23 +298,30 @@ def update_dashboard(kavsak, tarih, saat, kol, data_type="karlı gün verisi(şu
         gr.update(choices=v_arms, value=kol)
     )
 
-# ✅ DÜZELTİLMİŞ: Harita seçimi data_type’a göre tarihleri de doğru setler
 def handle_map_selection_v2(kavsak, current_data_type):
     choices = ANALYSIS_INTERSECTIONS.get(kavsak, [])
     if kavsak in KIZILIRMAK_LIST:
         dates = DATES_KIZILIRMAK
         return (
-            gr.update(choices=choices, value=choices[0] if choices else None),  # c_in
-            gr.update(choices=dates, value=dates[0] if dates else None),        # t_in
-            gr.update(visible=False)                                            # data_type_in
+            gr.update(choices=choices, value=choices[0] if choices else None),
+            gr.update(choices=dates, value=dates[0] if choices else None),
+            gr.update(visible=False)
+        )
+    elif kavsak == "Gesi":
+        dt = current_data_type if current_data_type in DATES_ILDEM else "normal veri(kasım)"
+        dates = DATES_ILDEM.get(dt, DATES_ILDEM["normal veri(kasım)"])
+        return (
+            gr.update(choices=choices, value=choices[0] if choices else None),
+            gr.update(choices=dates, value=dates[0] if dates else None),
+            gr.update(visible=True, value=dt)
         )
     else:
         dt = current_data_type if current_data_type in DATES_ILDEM else "karlı gün verisi(şubat)"
         dates = DATES_ILDEM.get(dt, DATES_ILDEM["karlı gün verisi(şubat)"])
         return (
-            gr.update(choices=choices, value=choices[0] if choices else None),  # c_in
-            gr.update(choices=dates, value=dates[0] if dates else None),        # t_in
-            gr.update(visible=True, value=dt)                                   # data_type_in
+            gr.update(choices=choices, value=choices[0] if choices else None),
+            gr.update(choices=dates, value=dates[0] if dates else None),
+            gr.update(visible=True, value=dt)
         )
 
 def update_dates_by_data_type(data_type, kavsak):
@@ -290,7 +331,7 @@ def update_dates_by_data_type(data_type, kavsak):
     return gr.update()
 
 # ==========================================
-# 4) TRAFFIC LIGHT HTML (senin mevcut)
+# 4) TRAFFIC LIGHT HTML
 # ==========================================
 def generate_traffic_light_html(green_sec, yellow_sec, red_sec, protection_sec):
     try:
@@ -382,10 +423,10 @@ def generate_traffic_light_html(green_sec, yellow_sec, red_sec, protection_sec):
         """
         return html
     except Exception as e:
-        return f"<div style='color: red; padding: 20px;'>Error generating visualization: {e}</div>"
+        return f"<div style='color: red; padding: 20px;'>Error: {e}</div>"
 
 # =========================
-# 5) TRAIN / PLOT / PREPROCESS (senin kodun)
+# 5) TRAIN / PLOT / PREPROCESS
 # =========================
 def upload_and_train(npz_file, graph_file, algorithm):
     try:
@@ -452,12 +493,12 @@ def generate_plot(intersection, arm, zoom_start, zoom_end):
 
         if PLOT_IMG.exists():
             return "Plot generated successfully!", np.array(Image.open(PLOT_IMG).convert("RGB"))
-        return "❌ Plot image not found after generation. Check plot.py output.", None
+        return "❌ Plot image not found after generation.", None
     except subprocess.CalledProcessError as e:
         return f"❌ Error creating plot:\n{e.stderr}\n{e.stdout}", None
     except Exception as e:
         import traceback
-        return f"❌ An unexpected error occurred during plot generation:\n{traceback.format_exc()}", None
+        return f"❌ An unexpected error occurred:\n{traceback.format_exc()}", None
 
 def select_algorithm_action(algorithm_name):
     return f"Algorithm selected: {algorithm_name}"
@@ -465,7 +506,8 @@ def select_algorithm_action(algorithm_name):
 def datetime_to_minutes(dt):
     if pd.isna(dt):
         return None
-    return dt.day * 1440 + dt.hour * 60 + dt.minute
+    # Tam tarih-saat sıralaması için timestamp kullan
+    return dt.timestamp()
 
 def preprocess_excel_and_generate_npz_ui(excel_file):
     try:
@@ -477,11 +519,11 @@ def preprocess_excel_and_generate_npz_ui(excel_file):
 
         all_datetimes = []
         for sheet in sheet_names:
-            df_temp = pd.read_excel(xls, sheet_name=sheet)
+            df_temp = pd.read_excel(xls, sheet_name=sheet, header=None, nrows=10)
             mask = df_temp.apply(lambda row: row.astype(str).str.contains("Tarih").any(), axis=1)
             header_idx = mask.idxmax() if mask.any() else 0
 
-            df = pd.read_excel(xls, sheet_name=sheet, skiprows=header_idx + 1)
+            df = pd.read_excel(xls, sheet_name=sheet, header=header_idx)
             df["TarihSaat"] = pd.to_datetime(df["Tarih"].astype(str) + " " + df["Saat"].astype(str), errors="coerce")
             all_datetimes.extend(df["TarihSaat"].dropna().unique())
 
@@ -492,11 +534,11 @@ def preprocess_excel_and_generate_npz_ui(excel_file):
         location_offset = 0
 
         for sheet in sheet_names:
-            df_temp = pd.read_excel(xls, sheet_name=sheet)
+            df_temp = pd.read_excel(xls, sheet_name=sheet, header=None, nrows=10)
             mask = df_temp.apply(lambda row: row.astype(str).str.contains("Tarih").any(), axis=1)
             header_idx = mask.idxmax() if mask.any() else 0
 
-            df = pd.read_excel(xls, sheet_name=sheet, skiprows=header_idx + 1)
+            df = pd.read_excel(xls, sheet_name=sheet, header=header_idx)
 
             candidate_cols = [
                 col for col in df.columns
@@ -652,11 +694,11 @@ html, body, #gradio-app { height:100% !important; width:100% !important; margin:
 with gr.Blocks(title="SmartTech AI Platform", css=css_styles) as demo:
     gr.HTML(header_html)
 
-    current_intersection_state = gr.State(value="Farabi")
-    current_date_state = gr.State(value=DATES_KIZILIRMAK[0])
+    current_intersection_state = gr.State(value="Beyazşehir")
+    current_date_state = gr.State(value=DATES_ILDEM["normal veri(kasım)"][0])
     current_hour_state = gr.State(value=14)
-    current_arm_state = gr.State(value=ANALYSIS_INTERSECTIONS["Farabi"][0])
-    current_data_type_state = gr.State(value="karlı gün verisi(şubat)")
+    current_arm_state = gr.State(value=ANALYSIS_INTERSECTIONS.get("Beyazşehir", [None])[0])
+    current_data_type_state = gr.State(value="normal veri(kasım)")
 
     with gr.Tabs() as tabs:
 
@@ -732,9 +774,6 @@ with gr.Blocks(title="SmartTech AI Platform", css=css_styles) as demo:
                 intersection_dd.change(update_arms, inputs=intersection_dd, outputs=arm_dd)
                 plot_btn.click(generate_plot, [intersection_dd, arm_dd, zoom_start, zoom_end], [plot_status_output, plot_out])
 
-        # =========================
-        # ✅ Traffic Analysis (FINAL)
-        # =========================
         with gr.TabItem("Traffic Analysis"):
             with gr.Column(elem_classes="content-block"):
                 gr.HTML("<h3 style='text-align:center; padding:10px; color:#0f172a; font-weight:700;'>TRAFİK YÖNETİM VE ANALİZ SİSTEMİ</h3>")
@@ -778,7 +817,6 @@ with gr.Blocks(title="SmartTech AI Platform", css=css_styles) as demo:
                     analyze_btn = gr.Button("ANALİZİ BAŞLAT", elem_classes="train-model-button")
                     traffic_light_btn = gr.Button("SİNYALİZASYON ÖNERİSİ", elem_classes="select-button")
 
-                # --- Haritadan seçim (✅ data_type uyumlu) ---
                 map_trigger.change(
                     fn=lambda kavsak, dt: (
                         handle_map_selection_v2(kavsak, dt)[0],
@@ -790,17 +828,16 @@ with gr.Blocks(title="SmartTech AI Platform", css=css_styles) as demo:
                     outputs=[c_in, t_in, data_type_in, current_intersection_state]
                 )
 
-                # --- data_type değişince tarihleri güncelle + state ---
                 data_type_in.change(
                     fn=lambda dt, kavsak: (update_dates_by_data_type(dt, kavsak), dt),
                     inputs=[data_type_in, map_trigger],
                     outputs=[t_in, current_data_type_state]
                 )
 
-                # --- state update ---
-                t_in.change(lambda x: x, inputs=[t_in], outputs=[current_date_state])
+                map_trigger.change(lambda x: x, inputs=[map_trigger], outputs=[current_intersection_state])
                 s_in.change(lambda x: x, inputs=[s_in], outputs=[current_hour_state])
                 c_in.change(lambda x: x, inputs=[c_in], outputs=[current_arm_state])
+                data_type_in.change(lambda x: x, inputs=[data_type_in], outputs=[current_data_type_state])
 
                 analyze_btn.click(
                     fn=update_dashboard,
@@ -808,9 +845,6 @@ with gr.Blocks(title="SmartTech AI Platform", css=css_styles) as demo:
                     outputs=[res1, res2, res3, res4, plot_out_analysis, c_in]
                 )
 
-        # =========================
-        # Traffic Light Suggestion
-        # =========================
         with gr.TabItem("Traffic Light Suggestion"):
             with gr.Column(elem_classes="content-block"):
                 gr.Markdown("<p style='font-weight:700; color:#0f172a; text-align:center;'>TRAFFIC LIGHT TIMING SUGGESTION</p>")
@@ -836,15 +870,29 @@ with gr.Blocks(title="SmartTech AI Platform", css=css_styles) as demo:
                         return gr.update(choices=available_arms, value=value_to_set, interactive=True)
                     return gr.update(choices=[], value=None, interactive=False)
 
-                def calculate_traffic_light_suggestion(intersection, arm, hour):
+                def calculate_traffic_light_suggestion(intersection, arm, hour, data_type="normal veri(kasım)"):
                     if not intersection or not arm or not hour:
                         return "Please select intersection, arm, and hour.", ""
                     try:
+                        excel_mapping = {
+                            "karlı gün verisi(şubat)": str(BASE_DIR / "şubat_tahmin.xlsx"),
+                            "karlı gün verisi(ocak)": str(BASE_DIR / "ocak_tahmin.xlsx"),
+                            "normal veri(kasım)": str(BASE_DIR / "kasım_tahmin.xlsx")
+                        }
+                        excel_file = excel_mapping.get(data_type, str(BASE_DIR / "kasım_tahmin.xlsx"))
+
                         arm_letter = arm.split(" - ")[0] if " - " in arm else arm
                         result = subprocess.run(
-                            ["python", str(TRAFFIC_LIGHT_PY), intersection, arm_letter, str(hour), str(EXCEL_FILE)],
-                            capture_output=True, text=True, check=True, cwd=str(BASE_DIR)
+                            ["python", str(TRAFFIC_LIGHT_PY), intersection, arm_letter, str(hour), str(excel_file)],
+                            capture_output=True, text=True, check=False, cwd=str(BASE_DIR)
                         )
+
+                        if result.returncode != 0:
+                            error_msg = f"❌ traffic_light.py failed with exit code {result.returncode}\n\n"
+                            error_msg += f"STDOUT:\n{result.stdout}\n\n"
+                            error_msg += f"STDERR:\n{result.stderr}"
+                            return error_msg, ""
+
                         output_lines = result.stdout.strip().split("\n")
                         for line in reversed(output_lines):
                             if line.startswith("📤 SONUÇ:"):
@@ -852,27 +900,29 @@ with gr.Blocks(title="SmartTech AI Platform", css=css_styles) as demo:
                                 if len(values) == 4:
                                     green, yellow, red, protection = values
                                     visual_html = generate_traffic_light_html(green, yellow, red, protection)
-                                    return (f"✅ Suggestions calculated for {intersection} - {arm} at {hour}:00", visual_html)
+                                    return (f"✅ Suggestions calculated for {intersection} - {arm} at {hour}:00 ({data_type})", visual_html)
                         return f"⚠️ Unexpected output from traffic_light.py:\n{result.stdout}", ""
                     except Exception as e:
                         import traceback
                         return f"❌ Error:\n{traceback.format_exc()}", ""
 
+                tl_data_type_state = gr.State(value="normal veri(kasım)")
+
                 tl_intersection_dd.change(update_tl_arms, inputs=tl_intersection_dd, outputs=tl_arm_dd)
-                calculate_btn.click(calculate_traffic_light_suggestion, inputs=[tl_intersection_dd, tl_arm_dd, tl_hour_dd],
+                calculate_btn.click(calculate_traffic_light_suggestion, inputs=[tl_intersection_dd, tl_arm_dd, tl_hour_dd, tl_data_type_state],
                                     outputs=[suggestion_status, traffic_light_visual])
 
-                # --- Transfer (Traffic Analysis -> Traffic Light Suggestion) ---
                 temp_intersection = gr.State()
                 temp_arm = gr.State()
 
-                def transfer_to_traffic_light_state_based(intersection_state, hour_state, arm_state):
+                def transfer_to_traffic_light_state_based(intersection_state, hour_state, arm_state, data_type_state):
                     kavsak = intersection_state if intersection_state else "Farabi"
                     kol = arm_state if arm_state else ANALYSIS_INTERSECTIONS.get(kavsak, ["A - OSMAN ÖZCAN CAD."])[0]
                     saat = hour_state if hour_state is not None else 14
+                    data_type = data_type_state if data_type_state else "normal veri(kasım)"
 
                     intersection_mapping = {
-                        "Emrah": "Gesi", "Farabi": "Gesi", "Yahya Kemal": "Gesi",
+                        "Emrah": "Gesi", "Farabi": "Gesi", "Yahya Kemal": "Gesi", "Gesi": "Gesi",
                         "İldem 1": "İldem 1", "İldem 2": "İldem 2", "İldem 3": "İldem 3",
                         "İldem 4": "İldem 4", "İldem 5": "İldem 5",
                         "Serkent": "Serkent", "Beyazşehir": "Beyazşehir", "Toki": "Toki"
@@ -888,13 +938,14 @@ with gr.Blocks(title="SmartTech AI Platform", css=css_styles) as demo:
                     if hour_val not in valid_hours:
                         hour_val = min(valid_hours, key=lambda x: abs(x - hour_val))
 
-                    msg = f"🎉 {kavsak} kavşağı {matched_arm} kolu saat {hour_val}:00 parametreleri aktarıldı!"
+                    msg = f"🎉 {kavsak} kavşağı {matched_arm} kolu saat {hour_val}:00 ({data_type}) parametreleri aktarıldı!"
                     return (
                         gr.update(value=mapped_intersection),
                         gr.update(value=hour_val),
                         msg,
                         mapped_intersection,
-                        matched_arm
+                        matched_arm,
+                        data_type
                     )
 
                 def update_arm_after_transfer(intersection, target_arm):
@@ -902,8 +953,8 @@ with gr.Blocks(title="SmartTech AI Platform", css=css_styles) as demo:
 
                 traffic_light_btn.click(
                     fn=transfer_to_traffic_light_state_based,
-                    inputs=[current_intersection_state, current_hour_state, current_arm_state],
-                    outputs=[tl_intersection_dd, tl_hour_dd, suggestion_status, temp_intersection, temp_arm],
+                    inputs=[current_intersection_state, current_hour_state, current_arm_state, current_data_type_state],
+                    outputs=[tl_intersection_dd, tl_hour_dd, suggestion_status, temp_intersection, temp_arm, tl_data_type_state],
                     js="() => { const tabs = document.querySelectorAll('button[role=\"tab\"]'); if (tabs[4]) { tabs[4].click(); } }"
                 ).then(
                     fn=update_arm_after_transfer,
