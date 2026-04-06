@@ -1,8 +1,8 @@
 import pandas as pd
 
 # Input and output file paths
-input_file = r'C:\Users\lenovo\Desktop\Yeni_klasör\projects\AFDGCN_Garnoldi\real_flow.csv'
-output_file = 'real_flow_gar.csv'  # Replace with the desired path for the output file
+input_file = r'C:\Users\lenovo\Desktop\Yeni klasör\Yeni_klasör\projects\AFDGCN_Garnoldi\test_results_garnoldi.csv'
+output_file = 'test_gar_garnoldi.csv'  # Replace with the desired path for the output file
 
 # Read the input CSV file
 df_input = pd.read_csv(input_file, skiprows=1, names=["flow"])  # Read the file with one column named "flow"
@@ -17,8 +17,8 @@ speeds = []
 
 # Process the data
 for i in range(len(df_input)):
-    timestep = i // 34 + 1  # Calculate the timestep (1-based)
-    location = i % 34    # Calculate the location (0-7)
+    timestep = i // 16 + 1  # Calculate the timestep (1-based)
+    location = i % 16    # Calculate the location (0-15)
     timesteps.append(timestep)
     locations.append(location)
     flows.append(df_input.loc[i, "flow"])

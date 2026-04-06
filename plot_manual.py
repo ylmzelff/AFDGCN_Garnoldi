@@ -21,7 +21,7 @@ start_date = pd.Timestamp("2026-01-17 09:50")  # 8641st timestep (1 month predic
 
 
 # Time interval details
-time_interval = 10  # Time interval in minutes (PEMS08 standard)
+time_interval = 60  # Time interval in minutes (hourly data)
 daily_time_steps = int((24 * 60) / time_interval)  # Number of timesteps per day
 test_time_steps = 949  # Number of test timesteps (1 month)
 
@@ -42,7 +42,7 @@ zoom_end = next((i for i, t in enumerate(time_steps_real) if t >= zoom_end_date)
 
 # Ensure zoom_end is greater than zoom_start
 if zoom_end <= zoom_start:
-    zoom_end = min(zoom_start + 60, len(time_steps_real) - 1)  # Default to 60 timesteps (10 hours)
+    zoom_end = min(zoom_start + 60, len(time_steps_real) - 1)  # Default to 60 timesteps (60 hours)
 
 # Plot - Optimized for 2x2 layout on A4
 fig, ax = plt.subplots(figsize=(7, 5))

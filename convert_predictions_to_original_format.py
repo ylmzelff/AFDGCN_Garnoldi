@@ -63,7 +63,7 @@ def convert_to_intersection_format(input_csv, output_excel):
             unique_timesteps = sorted(df['timestep'].unique())
             
             for i, timestep in enumerate(unique_timesteps):
-                current_time = start_datetime + timedelta(minutes=i*10)
+                current_time = start_datetime + timedelta(hours=i)
                 tarih_list.append(current_time.strftime("%d.%m.%Y"))
                 saat_list.append(current_time.strftime("%H:%M"))
             
