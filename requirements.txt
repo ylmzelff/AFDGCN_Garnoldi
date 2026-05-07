@@ -1,0 +1,63 @@
+# ---------------------------------------------------------------
+# Mevcut bağımlılıklar (eğitim)
+# ---------------------------------------------------------------
+torch>=2.1.0
+numpy>=1.24
+pandas>=2.0
+scipy>=1.10
+scikit-learn
+tensorboardX
+torch_geometric
+torch_sparse
+
+# ---------------------------------------------------------------
+# Web servis
+# ---------------------------------------------------------------
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.7
+pydantic-settings>=2.0      # Config management
+python-multipart            # File upload
+python-jose[cryptography]   # JWT token generation
+passlib[bcrypt]             # Password hashing
+
+# ---------------------------------------------------------------
+# Veritabanı
+# ---------------------------------------------------------------
+sqlalchemy>=2.0
+asyncpg                     # Async PostgreSQL driver
+psycopg2-binary             # Sync tools (init_db, upload_model)
+
+# ---------------------------------------------------------------
+# Önbellek
+# ---------------------------------------------------------------
+cachetools>=5.3
+
+# ---------------------------------------------------------------
+# Middleware & Monitoring
+# ---------------------------------------------------------------
+slowapi>=0.1.9              # Rate limiting
+prometheus-fastapi-instrumentator>=6.1  # Metrics
+prometheus-client>=0.20
+
+# ---------------------------------------------------------------
+# Ortam değişkenleri
+# ---------------------------------------------------------------
+python-dotenv>=1.0
+
+# ---------------------------------------------------------------
+# Testing
+# ---------------------------------------------------------------
+pytest>=8.0
+pytest-asyncio>=0.23
+httpx>=0.27  # Test için async HTTP client
+pytest-cov>=4.1
+aiosqlite>=0.19             # SQLite async for tests
+
+# ---------------------------------------------------------------
+# Web Scraping (Belediye veri çekme)
+# ---------------------------------------------------------------
+requests>=2.31              # HTTP istekleri
+beautifulsoup4>=4.12        # HTML parsing
+selenium>=4.15              # Browser automation (opsiyonel)
+lxml>=4.9                   # XML/HTML parser
