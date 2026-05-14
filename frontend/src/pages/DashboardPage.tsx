@@ -8,8 +8,12 @@ import { apiClient } from '@/api/client';
 import { junctionName, junctionArms } from '@/config/junctionMeta';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Legend,
+  Tooltip, Legend, ResponsiveContainer,
+  PieChart, Pie, Cell,
 } from 'recharts';
+import { Fragment } from 'react';
+
+const ARM_PHASE_COLORS = ['#3b82f6', '#22c55e', '#f97316', '#8b5cf6', '#06b6d4', '#ec4899'];
 
 // ─── Bölge & Kavşak tanımları ────────────────────────────────────────────
 
@@ -74,6 +78,9 @@ export default function DashboardPage() {
   const [phaseData, setPhaseData] = useState<PhaseArm[] | null>(null);
   const [phaseCycle, setPhaseCycle] = useState(60);
   const [phaseLoading, setPhaseLoading] = useState(false);
+  const [phaseView, setPhaseView] = useState<'duration' | 'vehicles'>('duration');
+  const [regionOpen, setRegionOpen] = useState(true);
+  const [junctionOpen, setJunctionOpen] = useState(true);
 
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -105,13 +112,19 @@ export default function DashboardPage() {
     if (!name) return;
     try {
       const res = await apiClient.post(`/predict/region/${name}`);
-      const predictions: Record<string, Record<string, number>> = res.data.predictions ?? {};
+      // time_series'den her kol için son bilinen (sıfır olmayan) gerçek değeri kullan
+      const timeSeries: Record<string, Record<string, number[]>> = res.data.time_series ?? {};
       const next: Record<number, JunctionLive> = {};
-      for (const [jidStr, arms] of Object.entries(predictions)) {
+      for (const [jidStr, arms] of Object.entries(timeSeries)) {
         const jid = Number(jidStr);
-        const vals = Object.values(arms as Record<string, number>);
-        const total = vals.reduce((a, b) => a + b, 0);
-        const max   = vals.length ? Math.max(...vals) : 0;
+        let total = 0;
+        let max   = 0;
+        for (const series of Object.values(arms as Record<string, number[]>)) {
+          // Serinin sonundan ilk sıfır olmayan değeri bul
+          const lastVal = [...series].reverse().find((v) => v > 0) ?? 0;
+          total += lastVal;
+          max = Math.max(max, lastVal);
+        }
         next[jid] = { totalVehicles: Math.round(total), maxArmVehicles: Math.round(max), load: loadLevel(total) };
       }
       setLiveData(next);
@@ -119,13 +132,31 @@ export default function DashboardPage() {
     finally { setLiveLoading(false); }
   }, [selectedRegion?.name]);
 
-  // Sayfa açılınca 1 kez + her 60s yenile
+  // Sayfa açılınca 1 kez + her 10 dakikalık slot sınırında yenile (:00, :10, :20, ...)
   useEffect(() => {
     if (!selectedRegion) return;
     setLiveLoading(true);
     fetchLiveData();
-    const id = setInterval(fetchLiveData, 60_000);
-    return () => clearInterval(id);
+
+    // Bir sonraki slot sınırına kaç ms kaldığını hesapla
+    const msUntilNextSlot = () => {
+      const now = new Date();
+      const msLeft = ((10 - (now.getMinutes() % 10)) % 10) * 60_000
+        - now.getSeconds() * 1000
+        - now.getMilliseconds();
+      return msLeft <= 0 ? 600_000 : msLeft;
+    };
+
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+    const timeoutId = setTimeout(() => {
+      fetchLiveData();                                    // slot sınırında hemen güncelle
+      intervalId = setInterval(fetchLiveData, 600_000);  // sonra her 10 dakikada
+    }, msUntilNextSlot());
+
+    return () => {
+      clearTimeout(timeoutId);
+      if (intervalId) clearInterval(intervalId);
+    };
   }, [fetchLiveData, selectedRegion]);
 
   const stopPolling = useCallback(() => {
@@ -140,32 +171,46 @@ export default function DashboardPage() {
       setSource(data.source ?? '');
       setKayseriOk(data.kayseri_ok ?? null);
 
+      // slot index → "HH:MM" (10 dk dilim)
+      const slotToTime = (slotIdx: number) => {
+        const hh = Math.floor(slotIdx / 6);
+        const mm = (slotIdx % 6) * 10;
+        return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+      };
+
       if (initial) {
-        // Zaman serisi ile tüm geçmişi doldurup son noktaya tahmini ekle
         const series: number[] = data.time_series?.[junctionId]?.[arm] ?? [];
-        const n = series.length;
-        const now = Date.now();
-        const SLOT_MS = 10 * 60 * 1000; // 10 dakika
-        const points: ChartPoint[] = series.map((val, i) => {
-          const offsetMs = (i - (n - 1)) * SLOT_MS;
-          const t = new Date(now + offsetMs);
-          return {
-            time: t.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
-            real: Math.round(val),
-            predicted: i === n - 1 && predicted !== null ? Math.round(predicted) : null,
-          };
-        });
+        const predSeries: number[] = data.prediction_series?.[junctionId]?.[arm] ?? [];
+        const startSlot: number = data.time_series_start_slot ?? 0;
+
+        // Baştaki sıfır (trafik yok) noktaları kırp
+        let firstNonZero = 0;
+        for (let i = 0; i < series.length; i++) {
+          if (series[i] > 0) { firstNonZero = Math.max(0, i - 1); break; }
+        }
+        const trimmed = series.slice(firstNonZero);
+        const trimmedPred = predSeries.slice(firstNonZero);
+        const trimStart = startSlot + firstNonZero;
+
+        const points: ChartPoint[] = trimmed.map((val, i) => ({
+          time: slotToTime(trimStart + i),
+          real: Math.round(val),
+          predicted: trimmedPred[i] !== undefined ? Math.round(trimmedPred[i]) : null,
+        }));
         setChartData(points);
       } else {
-        // 10 dakikada bir yeni nokta ekle
+        // 10 dakikada bir yeni nokta ekle — tamamlanan (bir önceki) slotu göster
         const real = data.raw_data?.[junctionId]?.[arm] ?? null;
+        const now = new Date();
+        const curSlot = now.getHours() * 6 + Math.floor(now.getMinutes() / 10);
+        const completedSlot = Math.max(0, curSlot - 1); // backend ile aynı mantık
         setChartData(prev => {
           const point: ChartPoint = {
-            time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+            time: slotToTime(completedSlot),
             real: real !== null ? Math.round(real) : null,
             predicted: predicted !== null ? Math.round(predicted) : null,
           };
-          return [...prev, point].slice(-40);
+          return [...prev, point].slice(-144); // max 1 gün
         });
       }
     } catch { /* sunucu hatası sessizce geç */ }
@@ -191,16 +236,22 @@ export default function DashboardPage() {
     try {
       const res = await apiClient.post(`/predict/junction/${selectedJunction.id}?region=${selectedRegion?.name}`);
       const detail = res.data;
-      const cycleTime: number = detail.phase_recommendation?.cycle_time ?? 60;
+      // Backend yanıtı: detail.phases = { _cycle_time, _total_vehicles, A: {...}, B: {...}, ... }
+      const phases: Record<string, any> = detail.phases ?? {};
+      const cycleTime: number = (phases['_cycle_time'] as number) ?? 60;
       setPhaseCycle(cycleTime);
-      const arms: PhaseArm[] = Object.entries(detail.arms ?? {}).map(
-        ([arm, d]: [string, any]) => ({
-          arm, name: d.name ?? `Kol ${arm}`,
+      const arms: PhaseArm[] = Object.entries(phases)
+        .filter(([k, v]) => !k.startsWith('_') && v !== null && typeof v === 'object')
+        .map(([arm, d]) => ({
+          arm,
+          name: d.arm_name ?? `Kol ${arm}`,
           vehicle_count: d.vehicle_count ?? 0,
-          green: d.green ?? 0, yellow: d.yellow ?? 3, red: d.red ?? 0,
-          cycle_time: cycleTime, status: d.status ?? 'low',
-        }),
-      );
+          green: d.green ?? 0,
+          yellow: d.yellow ?? 3,
+          red: d.red ?? 0,
+          cycle_time: cycleTime,
+          status: d.status ?? 'low',
+        }));
       setPhaseData(arms);
     } catch { /* hata sessizce geç */ }
     finally { setPhaseLoading(false); }
@@ -217,10 +268,13 @@ export default function DashboardPage() {
     setLiveData({});
     setLiveLoading(true);
     fetchLiveData(region.name);
+    setRegionOpen(false);
+    setJunctionOpen(true);
   }
 
   function handleJunctionSelect(j: JunctionDef) {
     setSelectedJunction(j); setSelectedArm(null); setChartData([]); setPhaseData(null);
+    setJunctionOpen(false);
   }
 
   function handleLogout() { stopPolling(); logout(); navigate('/login', { replace: true }); }
@@ -230,7 +284,7 @@ export default function DashboardPage() {
 
       {/* ── Navbar ───────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-20 bg-brand shadow-lg">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
+        <div className="flex w-full items-center justify-between px-6 py-3">
           <div className="flex items-center gap-3">
             <TrafficCone className="h-6 w-6 text-white" />
             <div>
@@ -261,7 +315,7 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-4 py-6 space-y-6">
+      <main className="w-full px-6 py-6 space-y-6">
 
         {/* ── Breadcrumb ───────────────────────────────────────────────── */}
         <nav className="flex items-center gap-2 text-sm text-gray-500">
@@ -272,118 +326,126 @@ export default function DashboardPage() {
           )}
           {selectedArm && (
             <><ChevronRight className="h-4 w-4" />
-              <span className="font-semibold text-brand">Kol {selectedArm}</span></>
+              <span className="font-semibold text-brand">Faz {selectedArm}</span></>
           )}
         </nav>
 
         {/* ── Bölge Seç ─────────────────────────────────────────────── */}
         <section>
-          <h2 className="mb-3 text-xs font-bold uppercase tracking-widest text-gray-400">Bölge Seç</h2>
-          <div className="flex gap-3 flex-wrap">
-            {regions.map((r) => {
-              const active = selectedRegion?.name === r.name;
-              return (
-                <button
-                  key={r.name}
-                  onClick={() => handleRegionSelect(r)}
-                  className={`flex items-center gap-3 rounded-xl border-2 px-5 py-3 transition focus:outline-none ${
-                    active
-                      ? 'border-brand bg-brand text-white shadow-lg'
-                      : 'border-gray-200 bg-white hover:border-brand/50 text-gray-700'
-                  }`}
-                >
-                  <div className={`flex h-9 w-9 items-center justify-center rounded-lg ${
-                    active ? 'bg-white/20' : 'bg-gray-100'
-                  }`}>
+          <button
+            onClick={() => setRegionOpen((v) => !v)}
+            className="flex w-full items-center justify-between rounded-xl border border-gray-200 bg-white px-4 py-2.5 shadow-sm hover:bg-gray-50 transition"
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold uppercase tracking-widest text-gray-500">Bölge Seç</span>
+              {selectedRegion && !regionOpen && (
+                <span className="text-xs font-semibold text-brand bg-brand/10 px-2 py-0.5 rounded-full">{selectedRegion.label}</span>
+              )}
+            </div>
+            <ChevronRight className={`h-4 w-4 text-gray-400 transition-transform duration-200 ${regionOpen ? 'rotate-90' : ''}`} />
+          </button>
+          {regionOpen && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {regions.map((r) => {
+                const active = selectedRegion?.name === r.name;
+                return (
+                  <button
+                    key={r.name}
+                    onClick={() => handleRegionSelect(r)}
+                    className={`flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm font-medium transition focus:outline-none ${
+                      active
+                        ? 'border-brand bg-brand text-white shadow-md'
+                        : 'border-gray-200 bg-white text-gray-700 hover:border-brand/50 hover:shadow-sm'
+                    }`}
+                  >
                     {r.useModel
-                      ? <Brain className={`h-5 w-5 ${active ? 'text-white' : 'text-brand'}`} />
-                      : <BarChart2 className={`h-5 w-5 ${active ? 'text-white' : 'text-purple-500'}`} />
+                      ? <Brain className={`h-3.5 w-3.5 flex-shrink-0 ${active ? 'text-white/70' : 'text-brand'}`} />
+                      : <BarChart2 className={`h-3.5 w-3.5 flex-shrink-0 ${active ? 'text-white/70' : 'text-purple-500'}`} />
                     }
-                  </div>
-                  <div className="text-left">
-                    <div className={`text-sm font-bold ${active ? 'text-white' : 'text-gray-800'}`}>{r.label}</div>
-                    <div className={`text-[11px] ${active ? 'text-white/70' : 'text-gray-400'}`}>
-                      {r.description} · {r.useModel ? 'AFDGCN' : 'Moving Avg'}
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+                    <span>{r.label}</span>
+                    <span className={`text-[11px] font-normal ${active ? 'text-white/60' : 'text-gray-400'}`}>
+                      {r.useModel ? 'AFDGCN' : 'Moving Avg'}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </section>
 
         {/* ── Adım 1: Kavşak Seç ──────────────────────────────────────── */}
         <section>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-xs font-bold uppercase tracking-widest text-gray-400">Kavşak Seç — {selectedRegion?.label ?? ''}</h2>
-            <div className="flex items-center gap-3 text-xs text-gray-400">
-              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-green-400 inline-block" />Düşük</span>
-              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-yellow-400 inline-block" />Orta</span>
-              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-red-400 inline-block" />Yoğun</span>
-              <button onClick={() => fetchLiveData()} className="ml-1 flex items-center gap-1 hover:text-gray-600 transition">
+          <button
+            onClick={() => setJunctionOpen((v) => !v)}
+            className="flex w-full items-center justify-between rounded-xl border border-gray-200 bg-white px-4 py-2.5 shadow-sm hover:bg-gray-50 transition"
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold uppercase tracking-widest text-gray-500">Kavşak Seç — {selectedRegion?.label ?? ''}</span>
+              {selectedJunction && !junctionOpen && (
+                <span className="text-xs font-semibold text-brand bg-brand/10 px-2 py-0.5 rounded-full">{selectedJunction.name}</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={(e) => { e.stopPropagation(); fetchLiveData(); }}
+                className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 transition px-2 py-1 rounded-lg hover:bg-gray-100"
+              >
                 <RefreshCw className="h-3.5 w-3.5" />Güncelle
               </button>
+              <ChevronRight className={`h-4 w-4 text-gray-400 transition-transform duration-200 ${junctionOpen ? 'rotate-90' : ''}`} />
             </div>
-          </div>
-          <div className="grid grid-cols-3 gap-3 sm:grid-cols-5">
+          </button>
+
+          {junctionOpen && (
+            <>
+              {/* Pill listesi */}
+              <div className="mt-2 flex flex-wrap gap-2">
             {(selectedRegion?.junctions ?? []).map((j) => {
               const sel  = selectedJunction?.id === j.id;
               const live = liveData[j.id];
-              const lvl  = live?.load ?? null;
-              const dotColor =
-                lvl === 'high'   ? 'bg-red-400' :
-                lvl === 'medium' ? 'bg-yellow-400' :
-                lvl === 'low'    ? 'bg-green-400' :
-                                   'bg-gray-300';
-              const barPct = live
-                ? Math.min(100, Math.round((live.totalVehicles / 200) * 100))
-                : 0;
               return (
                 <button
                   key={j.id}
                   onClick={() => handleJunctionSelect(j)}
-                  className={`group rounded-xl border-2 p-3 text-left transition focus:outline-none ${
+                  className={`flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm font-medium transition focus:outline-none ${
                     sel
-                      ? 'border-brand bg-brand text-white shadow-lg scale-[1.02]'
-                      : 'border-gray-200 bg-white hover:border-brand/50 hover:shadow-md'
+                      ? 'border-brand bg-brand text-white shadow-md'
+                      : 'border-gray-200 bg-white text-gray-700 hover:border-brand/50 hover:shadow-sm'
                   }`}
                 >
-                  {/* Üst satır: ID + canlı nokta */}
-                  <div className="flex items-center justify-between mb-1.5">
-                    <div className="flex items-center gap-1">
-                      <TrafficCone className={`h-3.5 w-3.5 ${sel ? 'text-white/60' : 'text-brand'}`} />
-                      <span className={`text-[11px] font-medium ${sel ? 'text-white/60' : 'text-gray-400'}`}>#{j.id}</span>
-                    </div>
-                    {liveLoading
-                      ? <span className="h-2 w-2 rounded-full bg-gray-300 animate-pulse" />
-                      : <span className={`h-2 w-2 rounded-full ${dotColor} ${!sel && lvl === 'high' ? 'animate-pulse' : ''}`} />
-                    }
-                  </div>
-                  {/* İsim */}
-                  <p className={`text-sm font-bold leading-tight ${sel ? 'text-white' : 'text-gray-800'}`}>{j.name}</p>
-                  {/* Araç sayısı */}
-                  {!liveLoading && live ? (
-                    <p className={`text-[11px] mt-0.5 font-semibold ${sel ? 'text-white/70' : 'text-gray-500'}`}>
+                  <TrafficCone className={`h-3.5 w-3.5 flex-shrink-0 ${sel ? 'text-white/70' : 'text-brand'}`} />
+                  <span>{j.name}</span>
+                  {!liveLoading && live && (
+                    <span className={`text-[11px] font-normal ${sel ? 'text-white/60' : 'text-gray-400'}`}>
                       {live.totalVehicles} araç
-                    </p>
-                  ) : (
-                    <p className={`text-[11px] mt-0.5 ${sel ? 'text-white/50' : 'text-gray-400'}`}>{j.arms.length} kol</p>
-                  )}
-                  {/* Yük bar */}
-                  {!sel && (
-                    <div className="mt-2 h-1 w-full rounded-full bg-gray-100 overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all ${
-                          lvl === 'high' ? 'bg-red-400' : lvl === 'medium' ? 'bg-yellow-400' : 'bg-green-400'
-                        }`}
-                        style={{ width: `${barPct}%` }}
-                      />
-                    </div>
+                    </span>
                   )}
                 </button>
               );
             })}
-          </div>
+              </div>
+
+              {/* Seçili kavşak detay kartı */}
+              {selectedJunction && (() => {
+                const live = liveData[selectedJunction.id];
+                return (
+                  <div className="mt-2 flex items-center gap-4 rounded-2xl border border-brand/20 bg-brand/5 px-4 py-3">
+                    <TrafficCone className="h-5 w-5 text-brand flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-gray-800 text-sm">{selectedJunction.name}</p>
+                      <p className="text-[11px] text-gray-400">#{selectedJunction.id} · {selectedJunction.arms.length} kol</p>
+                    </div>
+                    {live && (
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-lg font-bold text-brand">{live.totalVehicles}</p>
+                        <p className="text-[11px] text-gray-400">araç</p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </>
+          )}
         </section>
 
         {/* ── Adım 2: Faz Önerisi ─────────────────────────────────────── */}
@@ -406,66 +468,226 @@ export default function DashboardPage() {
             </div>
 
             {phaseData && (
-              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                {phaseData.map((arm) => (
-                  <div key={arm.arm} className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xl font-bold text-gray-800">Kol {arm.arm}</span>
-                      <span className={`text-xs rounded-full px-2 py-0.5 font-semibold ${
-                        arm.status === 'low'    ? 'bg-green-100 text-green-700' :
-                        arm.status === 'medium' ? 'bg-yellow-100 text-yellow-700' :
-                                                  'bg-red-100 text-red-700'
-                      }`}>
-                        {arm.status === 'low' ? 'Düşük' : arm.status === 'medium' ? 'Orta' : 'Yoğun'}
-                      </span>
+              <div className="mt-4 rounded-2xl border border-gray-100 bg-white shadow-sm overflow-hidden">
+
+                {/* ── Header ── */}
+                <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 bg-gray-50 border-b border-gray-100">
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <span className="font-semibold text-gray-800">{selectedJunction.name}</span>
+                    <span className="text-xs bg-brand/10 text-brand font-bold px-2.5 py-0.5 rounded-full">{phaseCycle}s döngü</span>
+                    <span className="text-xs bg-gray-200 text-gray-600 font-medium px-2 py-0.5 rounded-full">Webster Oranınlı Mod</span>
+                    {source && (
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
+                        source === 'AFDGCN' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
+                      }`}>{source}</span>
+                    )}
+                  </div>
+                  <div className="flex rounded-lg overflow-hidden border border-gray-200 text-xs">
+                    <button
+                      onClick={() => setPhaseView('duration')}
+                      className={`px-3 py-1.5 font-medium transition ${
+                        phaseView === 'duration' ? 'bg-brand text-white' : 'text-gray-500 hover:bg-gray-100'
+                      }`}
+                    >Faz Süre Dağılımı</button>
+                    <button
+                      onClick={() => setPhaseView('vehicles')}
+                      className={`px-3 py-1.5 font-medium border-l border-gray-200 transition ${
+                        phaseView === 'vehicles' ? 'bg-brand text-white' : 'text-gray-500 hover:bg-gray-100'
+                      }`}
+                    >Araç Sayısı Dağılımı</button>
+                  </div>
+                </div>
+
+                {/* ── Body ── */}
+                <div className="flex flex-col lg:flex-row">
+
+                  {/* Left — Cycle timeline + arm bars */}
+                  <div className="flex-1 p-5">
+
+                    {/* Cycle stacked bar */}
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Döngü Zaman Çizelgesi ({phaseCycle}s)</p>
+                    <div className="flex h-9 rounded-lg overflow-hidden mb-5 ring-1 ring-black/5">
+                      {phaseData.map((arm, i) => (
+                        <Fragment key={arm.arm}>
+                          <div
+                            style={{ flex: arm.green, background: ARM_PHASE_COLORS[i % ARM_PHASE_COLORS.length] }}
+                            title={`Kol ${arm.arm} Yeşil: ${arm.green}s`}
+                            className="relative flex items-center justify-center"
+                          >
+                            {arm.green >= 10 && (
+                              <span className="text-[10px] font-bold text-white/90 select-none">{arm.arm}</span>
+                            )}
+                          </div>
+                          <div
+                            style={{ flex: arm.yellow, background: '#eab308' }}
+                            title={`Kol ${arm.arm} Sarı: ${arm.yellow}s`}
+                          />
+                          <div
+                            style={{ flex: 6, background: '#4b5563' }}
+                            title="Koruma: 6s"
+                            className="opacity-70"
+                          />
+                        </Fragment>
+                      ))}
                     </div>
-                    <p className="text-[11px] text-gray-400 mb-1 truncate" title={arm.name}>{arm.name}</p>
-                    <p className="text-sm text-gray-600 font-medium mb-3">{Math.round(arm.vehicle_count)} araç</p>
-                    <div className="space-y-1.5">
-                      <PhaseBar label="Yeşil"   seconds={arm.green}  total={phaseCycle} color="bg-green-500" />
-                      <PhaseBar label="Sarı"    seconds={arm.yellow} total={phaseCycle} color="bg-yellow-400" />
-                      <PhaseBar label="Kırmızı" seconds={arm.red}    total={phaseCycle} color="bg-red-500" />
+
+                    {/* Arm rows — tıklayınca trafik grafiği açılır */}
+                    <p className="text-[10px] text-gray-400 mt-1 mb-1">Trafik grafiği için bir faza tıklayın</p>
+                    <div className="space-y-2">
+                      {phaseData.map((arm, i) => {
+                        const color = ARM_PHASE_COLORS[i % ARM_PHASE_COLORS.length];
+                        const maxGreen = Math.max(...phaseData.map((a) => a.green), 1);
+                        const maxVeh   = Math.max(...phaseData.map((a) => a.vehicle_count), 1);
+                        const barPct   = phaseView === 'duration'
+                          ? (arm.green / maxGreen) * 100
+                          : (arm.vehicle_count / maxVeh) * 100;
+                        const label = phaseView === 'duration'
+                          ? `${arm.green}s · %${Math.round((arm.green / phaseCycle) * 100)}`
+                          : `${Math.round(arm.vehicle_count)} araç`;
+                        const isActive = selectedArm === arm.arm;
+                        return (
+                          <button
+                            key={arm.arm}
+                            onClick={() => setSelectedArm(isActive ? null : arm.arm)}
+                            className={`w-full flex items-center gap-3 rounded-xl px-3 py-2 transition text-left border-2 ${
+                              isActive
+                                ? 'border-opacity-100 shadow-sm'
+                                : 'border-transparent hover:bg-gray-50'
+                            }`}
+                            style={isActive ? { borderColor: color, background: color + '12' } : {}}
+                          >
+                            <div className="w-12 text-sm font-bold flex-shrink-0" style={{ color }}>Faz {arm.arm}</div>
+                            <div className="flex-1 bg-gray-100 h-6 rounded-full overflow-hidden">
+                              <div
+                                className="h-full rounded-full transition-all"
+                                style={{ width: `${barPct}%`, background: color }}
+                              />
+                            </div>
+                            <span className="text-xs text-gray-600 font-mono w-20 text-right flex-shrink-0">{label}</span>
+                            {isActive && <span className="text-[10px] font-bold flex-shrink-0" style={{ color }}>Grafik ↓</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Stat table */}
+                    <div className="mt-4 pt-3 border-t border-gray-100">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-gray-400 uppercase tracking-wide">
+                            <th className="text-left font-semibold pb-1.5">Faz</th>
+                            <th className="text-right font-semibold pb-1.5">Yeşil</th>
+                            <th className="text-right font-semibold pb-1.5">Sarı</th>
+                            <th className="text-right font-semibold pb-1.5">Kırmızı</th>
+                            <th className="text-right font-semibold pb-1.5">Araç</th>
+                            <th className="text-right font-semibold pb-1.5">Durum</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-50">
+                          {phaseData.map((arm, i) => (
+                            <tr
+                              key={arm.arm}
+                              onClick={() => setSelectedArm(selectedArm === arm.arm ? null : arm.arm)}
+                              className={`cursor-pointer transition ${
+                                selectedArm === arm.arm ? 'bg-blue-50' : 'hover:bg-gray-50'
+                              }`}
+                            >
+                              <td className="py-1 font-bold" style={{ color: ARM_PHASE_COLORS[i % ARM_PHASE_COLORS.length] }}>Faz {arm.arm}</td>
+                              <td className="text-right text-green-600 font-mono">{arm.green}s</td>
+                              <td className="text-right text-yellow-600 font-mono">{arm.yellow}s</td>
+                              <td className="text-right text-red-500 font-mono">{arm.red}s</td>
+                              <td className="text-right text-gray-700 font-mono">{Math.round(arm.vehicle_count)}</td>
+                              <td className="text-right">
+                                <span className={`px-1.5 py-0.5 rounded-full font-semibold ${
+                                  arm.status === 'low'    ? 'bg-green-100 text-green-700' :
+                                  arm.status === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                                                            'bg-red-100 text-red-700'
+                                }`}>
+                                  {arm.status === 'low' ? 'Düşük' : arm.status === 'medium' ? 'Orta' : 'Yoğun'}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Color legend */}
+                    <div className="flex gap-4 mt-3">
+                      <span className="flex items-center gap-1.5 text-xs text-gray-400"><span className="h-2 w-5 rounded-sm bg-green-500" />Yeşil</span>
+                      <span className="flex items-center gap-1.5 text-xs text-gray-400"><span className="h-2 w-5 rounded-sm bg-yellow-400" />Sarı</span>
+                      <span className="flex items-center gap-1.5 text-xs text-gray-400"><span className="h-2 w-5 rounded-sm bg-gray-600 opacity-70" />Koruma</span>
                     </div>
                   </div>
-                ))}
+
+                  <div className="hidden lg:block w-px bg-gray-100" />
+
+                  {/* Right — Pie chart + legend */}
+                  <div className="w-full lg:w-72 p-5 flex flex-col items-center border-t lg:border-t-0 border-gray-100">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1 self-start">
+                      {phaseView === 'duration' ? 'Faz Süre Dağılımı' : 'Araç Sayısı Dağılımı'}
+                    </p>
+                    <ResponsiveContainer width="100%" height={220}>
+                      <PieChart>
+                        <Pie
+                          data={phaseData.map((arm, i) => ({
+                            name: `Faz ${arm.arm}`,
+                            value: phaseView === 'duration' ? arm.green : Math.round(arm.vehicle_count),
+                            fill: ARM_PHASE_COLORS[i % ARM_PHASE_COLORS.length],
+                          }))}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={52}
+                          outerRadius={90}
+                          paddingAngle={2}
+                          dataKey="value"
+                          label={({ name, value, percent }: any) =>
+                            (percent as number) > 0.06
+                              ? `${name} ${value}${phaseView === 'duration' ? 's' : ''} %${Math.round((percent as number) * 100)}`
+                              : ''
+                          }
+                          labelLine
+                        >
+                          {phaseData.map((_, i) => (
+                            <Cell key={i} fill={ARM_PHASE_COLORS[i % ARM_PHASE_COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip
+                          formatter={(v: number) => [phaseView === 'duration' ? `${v}s` : `${v} araç`]}
+                          contentStyle={{ fontSize: 11, borderRadius: 8 }}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+
+                    {/* Legend rows */}
+                    <div className="space-y-2 w-full mt-1">
+                      {phaseData.map((arm, i) => {
+                        const total = phaseData.reduce((s, a) =>
+                          s + (phaseView === 'duration' ? a.green : a.vehicle_count), 0);
+                        const val = phaseView === 'duration' ? arm.green : arm.vehicle_count;
+                        const pct = total > 0 ? Math.round((val / total) * 100) : 0;
+                        return (
+                          <div key={arm.arm} className="flex items-center gap-2 text-xs">
+                            <div className="h-3 w-3 rounded-full flex-shrink-0" style={{ background: ARM_PHASE_COLORS[i % ARM_PHASE_COLORS.length] }} />
+                            <span className="font-bold text-gray-700 w-10">Faz {arm.arm}</span>
+                            <span className="text-gray-400 flex-1 truncate text-[11px]" title={arm.name}>{arm.name}</span>
+                            <span className="font-bold text-gray-800 tabular-nums">
+                              {phaseView === 'duration' ? `${arm.green}s` : Math.round(arm.vehicle_count)}
+                            </span>
+                            <span className="text-gray-400 w-8 text-right">%{pct}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                </div>
               </div>
             )}
           </section>
         )}
 
-        {/* ── Adım 3: Kol Seç ─────────────────────────────────────────── */}
-        {selectedJunction && (
-          <section className="animate-fade-in">
-            <h2 className="mb-3 text-xs font-bold uppercase tracking-widest text-gray-400">
-              {selectedJunction.name} — Kol Seç (Trafik Grafiği)
-            </h2>
-            <div className="flex gap-3 flex-wrap">
-              {selectedJunction.arms.map((arm) => {
-                const live = liveData[selectedJunction.id];
-                const approxCount = live ? Math.round(live.totalVehicles / selectedJunction.arms.length) : null;
-                const isSelected = selectedArm === arm;
-                return (
-                  <button
-                    key={arm}
-                    onClick={() => setSelectedArm(arm)}
-                    className={`min-w-[96px] rounded-xl border-2 px-5 py-3 text-center transition focus:outline-none ${
-                      isSelected
-                        ? 'border-brand bg-brand text-white shadow-lg'
-                        : 'border-gray-200 bg-white hover:border-brand/40 text-gray-700'
-                    }`}
-                  >
-                    <div className="text-base font-bold">Kol {arm}</div>
-                    {approxCount !== null && (
-                      <div className={`text-[11px] mt-0.5 ${isSelected ? 'text-white/70' : 'text-gray-400'}`}>
-                        ~{approxCount} araç
-                      </div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-        )}
+
 
         {/* ── Adım 4: Grafik ──────────────────────────────────────────── */}
         {selectedJunction && selectedArm && (
@@ -473,7 +695,7 @@ export default function DashboardPage() {
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div>
                 <h2 className="text-base font-bold text-gray-800">
-                  {selectedJunction.name} — Kol {selectedArm} — Araç Akışı
+                  {selectedJunction.name} — Faz {selectedArm} — Araç Akışı
                 </h2>
                 <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
                   {source && <><Activity className="h-3 w-3" />{source} · </>}
@@ -509,8 +731,8 @@ export default function DashboardPage() {
                       stroke="#3b82f6" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} connectNulls
                     />
                     <Line
-                      type="monotone" dataKey="predicted" name="Tahmin (AFDGCN)"
-                      stroke="#f97316" strokeWidth={2.5} strokeDasharray="7 3"
+                      type="monotone" dataKey="predicted" name="Tahmin"
+                      stroke="#f97316" strokeWidth={2} strokeDasharray="5 3"
                       dot={false} activeDot={{ r: 4 }} connectNulls
                     />
                   </LineChart>

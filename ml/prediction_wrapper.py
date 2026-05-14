@@ -122,10 +122,14 @@ ARM_NAMES: Dict[int, Dict[str, str]] = {
     },
 }
 
-# Varsayılan model arama sırası (DB'den yollanmamışsa fallback)
+# DB'den yüklenen model buraya önbelleğe alınır (Python yeniden başladığında kullanılır)
+_CACHED_MODEL_PATH = PROJECT_ROOT / "saved_models" / "_active_model_cache.pth"
+
+# Varsayılan model arama sırası — önce önbellek, sonra gerçek model dosyaları
 _DEFAULT_MODEL_PATHS = [
+    _CACHED_MODEL_PATH,
     PROJECT_ROOT / "saved_models" / "kayseri_ildem_34.pth",
-    PROJECT_ROOT / "saved_models" / "kayseri_ildem_v1.pth",
+    PROJECT_ROOT / "saved_models" / "kayseri_ildem_34_dummy.pth",
 ]
 
 # Aktif model dosya yolu (DB'den aktivasyon yapıldığında güncellenir)
@@ -181,6 +185,14 @@ def _try_load(path: Path):
 
     state_dict = torch.load(path, map_location="cpu", weights_only=True)
 
+    # Checkpoint dict formatı (scaler bilgisi içerebilir)
+    _ckpt_scaler_mean = None
+    _ckpt_scaler_std = None
+    if isinstance(state_dict, dict) and 'state_dict' in state_dict:
+        _ckpt_scaler_mean = state_dict.get('scaler_mean')
+        _ckpt_scaler_std = state_dict.get('scaler_std')
+        state_dict = state_dict['state_dict']
+
     if "node_embedding" not in state_dict:
         logger.warning("%s: node_embedding bulunamadı", path.name)
         return None
@@ -188,7 +200,7 @@ def _try_load(path: Path):
     n_nodes, e_dim = state_dict["node_embedding"].shape
     if n_nodes != NUM_NODES:
         logger.warning(
-            "%s: %d node içeriyor, %d bekleniyor – atlanıyor",
+            "%s: %d node iceriyor, %d bekleniyor - atlaniyor",
             path.name, n_nodes, NUM_NODES,
         )
         return None
@@ -221,6 +233,11 @@ def _try_load(path: Path):
 
     net.load_state_dict(state_dict, strict=False)
     net.eval()
+    if _ckpt_scaler_mean is not None and _ckpt_scaler_std is not None:
+        global SCALER_MEAN, SCALER_STD
+        SCALER_MEAN = float(_ckpt_scaler_mean)
+        SCALER_STD = float(_ckpt_scaler_std)
+        logger.info("Scaler .pth'dan yüklendi: mean=%.4f std=%.4f", SCALER_MEAN, SCALER_STD)
     logger.info("✅ Model yüklendi: %s (%d node, lag=%d)", path.name, NUM_NODES, lag)
     return net, lag
 
@@ -248,6 +265,74 @@ async def ensure_model_loaded() -> None:
         _model_ready = True
 
 
+def _try_load_from_bytes(data: bytes):
+    """
+    Ham .pth bytes'ından AFDGCN modelini yükler.
+    _try_load() ile aynı doğrulama mantığını izler.
+    """
+    import io
+    import model.AFDGCN as afdgcn_mod
+
+    buf = io.BytesIO(data)
+    state_dict = torch.load(buf, map_location="cpu", weights_only=True)
+
+    # Checkpoint dict formatı (scaler bilgisi içerebilir)
+    _ckpt_scaler_mean = None
+    _ckpt_scaler_std = None
+    if isinstance(state_dict, dict) and 'state_dict' in state_dict:
+        _ckpt_scaler_mean = state_dict.get('scaler_mean')
+        _ckpt_scaler_std = state_dict.get('scaler_std')
+        state_dict = state_dict['state_dict']
+
+    if "node_embedding" not in state_dict:
+        logger.warning("bytes model: node_embedding bulunamadi")
+        return None
+
+    n_nodes, e_dim = state_dict["node_embedding"].shape
+    if n_nodes != NUM_NODES:
+        logger.warning(
+            "bytes model: %d node iceriyor, %d bekleniyor - atlaniyor",
+            n_nodes, NUM_NODES,
+        )
+        return None
+
+    pe_key = "MultiHeadAttention.positional_encoding.pe"
+    nconv_key = "nconv.weight"
+    lag = int(state_dict[pe_key].shape[1]) if pe_key in state_dict else LAG
+    horizon = int(state_dict[nconv_key].shape[0]) if nconv_key in state_dict else HORIZON
+
+    A = _build_adj()
+    saved_algo = afdgcn_mod.ALGO
+    try:
+        afdgcn_mod.ALGO = "Garnoldi"
+        net = afdgcn_mod.Model(
+            num_node   = NUM_NODES,
+            input_dim  = 1,
+            hidden_dim = 64,
+            output_dim = 1,
+            embed_dim  = e_dim,
+            cheb_k     = 2,
+            horizon    = horizon,
+            num_layers = 1,
+            heads      = 4,
+            timesteps  = lag,
+            A          = A,
+            kernel_size= 5,
+        )
+    finally:
+        afdgcn_mod.ALGO = saved_algo
+
+    net.load_state_dict(state_dict, strict=False)
+    net.eval()
+    if _ckpt_scaler_mean is not None and _ckpt_scaler_std is not None:
+        global SCALER_MEAN, SCALER_STD
+        SCALER_MEAN = float(_ckpt_scaler_mean)
+        SCALER_STD = float(_ckpt_scaler_std)
+        logger.info("Scaler bytes'dan yüklendi: mean=%.4f std=%.4f", SCALER_MEAN, SCALER_STD)
+    logger.info("Model bytes'dan yuklendi (%d node, lag=%d)", NUM_NODES, lag)
+    return net, lag
+
+
 async def reload_model(
     model_path: str,
     num_nodes: int = 34,
@@ -270,7 +355,6 @@ async def reload_model(
         return False, f"Dosya bulunamadı: {model_path}"
 
     async with _model_lock:
-        # Parametreleri güncelle
         NUM_NODES = num_nodes
         LAG = lag
         HORIZON = horizon
@@ -280,7 +364,6 @@ async def reload_model(
         if node_map is not None:
             _node_map = node_map
 
-        # State'i sıfırla
         _model = None
         _model_ready = False
         _history = []
@@ -297,6 +380,58 @@ async def reload_model(
         except Exception as exc:
             _model_ready = True
             return False, f"Model yükleme hatası: {exc}"
+
+
+async def reload_model_from_bytes(
+    weights: bytes,
+    num_nodes: int = 34,
+    lag: int = 1,
+    horizon: int = 1,
+    scaler_mean: float = 28.53,
+    scaler_std: float = 38.72,
+    node_map: Optional[Dict[int, Dict[str, int]]] = None,
+) -> tuple:
+    """
+    Ham .pth bytes'ından modeli sıcak yeniden yükler (dosya sistemi gerekmez).
+    Başarıyla yüklenirse gelecek başlatmalar için diske önbelleğe alınır.
+    Returns (success: bool, message: str)
+    """
+    global _model, _model_ready, _model_lag, _history
+    global NUM_NODES, LAG, HORIZON, SCALER_MEAN, SCALER_STD
+    global _node_map
+
+    async with _model_lock:
+        NUM_NODES = num_nodes
+        LAG = lag
+        HORIZON = horizon
+        SCALER_MEAN = scaler_mean
+        SCALER_STD = scaler_std
+        if node_map is not None:
+            _node_map = node_map
+
+        _model = None
+        _model_ready = False
+        _history = []
+
+        try:
+            result = _try_load_from_bytes(weights)
+            if result is not None:
+                _model, _model_lag = result
+                _model_ready = True
+                # Bir sonraki Python yeniden başlatmasında kullanmak için diske kaydet
+                try:
+                    _CACHED_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
+                    _CACHED_MODEL_PATH.write_bytes(weights)
+                    logger.info("Model önbelleğe alındı: %s", _CACHED_MODEL_PATH.name)
+                except Exception as cache_err:
+                    logger.warning("Model önbelleğe alınamadı: %s", cache_err)
+                return True, f"Model bytes'dan yuklendi ({num_nodes} node, lag={_model_lag})"
+            else:
+                _model_ready = True
+                return False, "Model bytes'dan yuklenemedi (node boyutu uyumsuz)"
+        except Exception as exc:
+            _model_ready = True
+            return False, f"Model bytes yükleme hatası: {exc}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -388,12 +523,20 @@ async def predict_next_timestep(
 
     await ensure_model_loaded()
 
+    lag_needed = _model_lag if _model is not None else LAG
+
+    # Sunucu yeni başladıysa veya geçmiş yetersizse API verisinden önceki slotları doldur
+    if len(_history) < lag_needed:
+        _history = []
+        start_idx = max(0, current_minute_index - lag_needed)
+        for i in range(start_idx, current_minute_index):
+            _history.append(belediye_to_node_vector(data_by_junction, i))
+
     current_vec = belediye_to_node_vector(data_by_junction, current_minute_index)
     _history.append(current_vec)
     if len(_history) > _MAX_HISTORY:
         _history.pop(0)
 
-    lag_needed = _model_lag if _model is not None else LAG
     if len(_history) < lag_needed:
         pad = [_history[0]] * (lag_needed - len(_history))
         history_arr = np.stack(pad + _history, axis=0)
@@ -421,6 +564,80 @@ async def predict_next_timestep(
             for arm, node_idx in arm_map.items()
         }
     return result
+
+
+def _predict_rolling_series_sync(
+    data_by_junction: Dict[int, List[dict]],
+    completed_idx: int,
+) -> Dict[int, Dict[str, List[float]]]:
+    """
+    Gün başından completed_idx dahil her slot için gerçek bir-adım-ileride tahmin üretir.
+
+    Slot i tahmini: model(actual[i-lag .. i-1]) → slot i araç sayısı
+    Yani tahmin üretilirken slot i'nin gerçek değeri KULLANILMAZ (data leakage yok).
+
+    Returns: {jid: {arm: [pred_slot_0, pred_slot_1, ..., pred_slot_completed_idx]}}
+    """
+    n_slots = completed_idx + 1
+    lag = _model_lag if _model is not None else LAG
+
+    # Tüm slotlar için gerçek vektörleri önceden hazırla
+    actual = np.zeros((n_slots, NUM_NODES), dtype=np.float32)
+    for s in range(n_slots):
+        actual[s] = belediye_to_node_vector(data_by_junction, s)
+
+    result_series = np.zeros((n_slots, NUM_NODES), dtype=np.float32)
+
+    for i in range(n_slots):
+        # Slot i'yi predict etmek için [i-lag .. i-1] penceresini kullan
+        if i == 0:
+            # Hiç geçmiş yok — sıfır vektörüyle tahmin
+            window = np.zeros((lag, NUM_NODES), dtype=np.float32)
+        elif i < lag:
+            # Yeterli geçmiş yok — sola sıfır dolgusuy
+            pad = np.zeros((lag - i, NUM_NODES), dtype=np.float32)
+            window = np.vstack([pad, actual[:i]])
+        else:
+            window = actual[i - lag : i]
+
+        window_norm = _normalize(window)
+
+        if _model is not None:
+            pred_norm = _run_forward(_model, window_norm)
+        else:
+            pred_norm = _moving_average_predict(window_norm)
+
+        pred = _denormalize(pred_norm)
+        pred = np.clip(pred, 0, None)
+        result_series[i] = pred[0]  # (NUM_NODES,)
+
+    # Node vektörünü kavşak/kol sözlüğüne çevir
+    out: Dict[int, Dict[str, List[float]]] = {}
+    for jid, arm_map in _node_map.items():
+        out[jid] = {
+            arm: [float(result_series[s, node_idx]) for s in range(n_slots)]
+            for arm, node_idx in arm_map.items()
+        }
+    return out
+
+
+async def predict_rolling_series(
+    data_by_junction: Dict[int, List[dict]],
+    completed_idx: int,
+) -> Dict[int, Dict[str, List[float]]]:
+    """
+    Async wrapper — rolling tahmin serisini döndürür.
+    Tüm forward pass'lar inference lock altında tek bir iş parçacığında çalışır.
+    """
+    await ensure_model_loaded()
+    async with _INFERENCE_LOCK:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            _predict_rolling_series_sync,
+            data_by_junction,
+            completed_idx,
+        )
 
 
 def get_model_status() -> dict:

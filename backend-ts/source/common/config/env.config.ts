@@ -23,10 +23,17 @@ export const env = {
     "postgresql://postgres:postgres123@localhost:5432/afdgcn",
   ),
 
-  // Kayseri Belediye API
+  // Kayseri Belediye API (eski dummy - artık kullanılmıyor)
   kayseriApiUrl: requireEnv("KAYSERI_API_URL", "http://localhost:9000"),
   kayseriUsername: requireEnv("KAYSERI_USERNAME", "demo"),
   kayseriPassword: requireEnv("KAYSERI_PASSWORD", "demo123"),
+
+  // AusTKM Gerçek Kayseri API
+  austmApiUrl: requireEnv(
+    "AUSTM_API_URL",
+    "https://ausapi.kayseri.bel.tr:18880",
+  ),
+  austmApiToken: requireEnv("AUSTM_API_TOKEN", ""),
 
   // Python AFDGCN Model Sunucusu
   pythonModelUrl: requireEnv("PYTHON_MODEL_URL", "http://localhost:9002"),

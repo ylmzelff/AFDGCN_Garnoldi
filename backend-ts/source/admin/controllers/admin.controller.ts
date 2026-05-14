@@ -1,7 +1,6 @@
 ﻿import type { Request, Response } from 'express'
 import path from 'path'
 import fs from 'fs'
-import { v4 as uuidv4 } from 'uuid'
 import multer from 'multer'
 import { kayseriClient, pythonModel } from '../../predict/services'
 import prisma from '../../database/prisma'
@@ -9,22 +8,11 @@ import { appState } from '../../common/services/app-state.service'
 import { loadRegionConfigs, REGION_CONFIG } from '../../predict/services/real-time-predictor.service'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Multer — Model dosyası yükleme konfigürasyonu
+// Multer — Model dosyası yükleme (memory storage → bytes direkt DB'ye gider)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const PROJECT_ROOT = path.join(process.cwd(), '..')
-const UPLOADS_DIR = path.join(PROJECT_ROOT, 'uploads', 'models')
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    fs.mkdirSync(UPLOADS_DIR, { recursive: true })
-    cb(null, UPLOADS_DIR)
-  },
-  filename: (_req, _file, cb) => cb(null, `${uuidv4()}.pth`),
-})
-
 export const modelUpload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   fileFilter: (_req, file, cb) => {
     if (file.originalname.endsWith('.pth')) cb(null, true)
     else cb(new Error('Sadece .pth dosyaları kabul edilir'))
@@ -126,8 +114,9 @@ export const listModelVersions = async (req: Request, res: Response): Promise<vo
     orderBy: { uploadedAt: 'desc' },
     select: {
       id: true, name: true, description: true, city: true, region: true,
-      filePath: true, numNodes: true, lag: true, horizon: true,
+      numNodes: true, lag: true, horizon: true,
       scalerMean: true, scalerStd: true, isActive: true, uploadedAt: true,
+      // weights alanı büyük olduğu için listede dönmüyoruz
     },
   })
   res.json(versions)
@@ -140,14 +129,14 @@ export const uploadModelVersion = async (req: Request, res: Response): Promise<v
   }
   const { name, description, city, region, numNodes, lag, horizon, scalerMean, scalerStd } = req.body as Record<string, string>
   if (!name || !city || !region || !numNodes) {
-    fs.unlinkSync(req.file.path)
     res.status(400).json({ error: true, code: 'VALIDATION', message: 'name, city, region, numNodes gerekli.' })
     return
   }
   const version = await prisma.modelVersion.create({
     data: {
       name, description: description ?? '', city, region,
-      filePath: req.file.path,
+      filePath: '',
+      weights: req.file.buffer,
       numNodes: Number(numNodes),
       lag: Number(lag ?? 1),
       horizon: Number(horizon ?? 1),
@@ -155,19 +144,34 @@ export const uploadModelVersion = async (req: Request, res: Response): Promise<v
       scalerStd: Number(scalerStd ?? 1),
       isActive: false,
     },
+    select: {
+      id: true, name: true, description: true, city: true, region: true,
+      numNodes: true, lag: true, horizon: true,
+      scalerMean: true, scalerStd: true, isActive: true, uploadedAt: true,
+    },
   })
   res.status(201).json(version)
 }
 
 export const activateModelVersion = async (req: Request, res: Response): Promise<void> => {
   const { id } = req.params as { id: string }
-  const version = await prisma.modelVersion.findUnique({ where: { id } })
+  const version = await prisma.modelVersion.findUnique({
+    where: { id },
+    select: {
+      id: true, name: true, city: true, region: true,
+      weights: true,
+      numNodes: true, lag: true, horizon: true,
+      scalerMean: true, scalerStd: true, isActive: true,
+      filePath: true,
+    },
+  })
   if (!version) {
     res.status(404).json({ error: true, code: 'NOT_FOUND', message: `Model versiyonu '${id}' bulunamadı.` })
     return
   }
-  const loadResult = await pythonModel.loadModel({
-    path: version.filePath,
+  const loadResult = await pythonModel.loadModelFromBytes({
+    weights: version.weights,
+    filePath: version.filePath,
     numNodes: version.numNodes,
     lag: version.lag,
     horizon: version.horizon,
@@ -182,13 +186,21 @@ export const activateModelVersion = async (req: Request, res: Response): Promise
     where: { city: version.city, region: version.region, isActive: true, id: { not: id } },
     data: { isActive: false },
   })
-  const activated = await prisma.modelVersion.update({ where: { id }, data: { isActive: true } })
+  const activated = await prisma.modelVersion.update({
+    where: { id },
+    data: { isActive: true },
+    select: {
+      id: true, name: true, description: true, city: true, region: true,
+      numNodes: true, lag: true, horizon: true,
+      scalerMean: true, scalerStd: true, isActive: true, uploadedAt: true,
+    },
+  })
   res.json({ status: 'activated', version: activated, modelLoad: loadResult })
 }
 
 export const deleteModelVersion = async (req: Request, res: Response): Promise<void> => {
   const { id } = req.params as { id: string }
-  const version = await prisma.modelVersion.findUnique({ where: { id } })
+  const version = await prisma.modelVersion.findUnique({ where: { id }, select: { id: true, isActive: true } })
   if (!version) {
     res.status(404).json({ error: true, code: 'NOT_FOUND', message: `Model versiyonu '${id}' bulunamadı.` })
     return
@@ -196,9 +208,6 @@ export const deleteModelVersion = async (req: Request, res: Response): Promise<v
   if (version.isActive) {
     res.status(400).json({ error: true, code: 'ACTIVE_MODEL', message: 'Aktif model versiyonu silinemez. Önce başka bir versiyonu aktive edin.' })
     return
-  }
-  if (version.filePath.includes(`${path.sep}uploads${path.sep}`)) {
-    fs.unlink(version.filePath, () => void 0)
   }
   await prisma.modelVersion.delete({ where: { id } })
   res.json({ status: 'deleted', id })

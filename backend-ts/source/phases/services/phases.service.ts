@@ -8,25 +8,15 @@
 import type { KayseriClientService } from '../../predict/services/kayseri-client.service'
 import type { PythonModelService } from '../../predict/services/python-model.service'
 import type { PhaseCalculatorService } from './phase-calculator.service'
-import { JUNCTION_NAMES } from './phase-calculator.service'
+import { JUNCTION_NAMES, ARM_DISPLAY_NAMES } from './phase-calculator.service'
 import { REGION_CONFIG } from '../../predict/services/real-time-predictor.service'
-import type { ArmPhase, JunctionPhase, RegionPhaseResponse } from '../types/phases.types'
+import type { ArmPhase, JunctionPhase, PhaseSeriesItem, RegionPhaseResponse } from '../types/phases.types'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sabitler — kavşak kol adları (görüntüleme için)
+// ARM_DISPLAY_NAMES artık phase-calculator.service.ts'den export edilmektedir.
 // ─────────────────────────────────────────────────────────────────────────────
-
-const ARM_NAMES: Record<number, Record<string, string>> = {
-  89:  { A: 'SİVAS BULVARI-SİVAS YÖNÜ', B: 'GESİ CAD.', C: 'SİVAS BULV-ŞEHİR MERKEZİ', D: '381. SOKAK' },
-  187: { A: '822. SK', B: 'GESİ CAD. DOĞU', C: 'KOCASİNAN CAD.', D: 'GESİ CAD. BATI' },
-  95:  { A: 'OSMAN ÖZCAN CAD.', B: 'GESİ CAD DOĞU', C: 'MARKETLER ÇIKIŞ', D: 'GESİ CAD BATI' },
-  121: { A: '832. CD', B: 'GESİ CAD. DOĞU', C: 'KADİR HAS BUL.', D: 'GESİ CAD BATI' },
-  184: { A: 'DİNÇER SOKAK', B: 'ALPARSLAN TÜRKEŞ BUL.', D: 'GESİ CAD' },
-  188: { A: 'DİNÇER SOKAK KUZEY', B: 'HANEDAN SOKAK', C: 'DİNÇER SOKAK GÜNEY', D: 'FETİH SOKAK' },
-  117: { A: 'DÜNDAR TAŞER CAD. KUZEY', C: 'DÜNDAR TAŞER CAD. GÜNEY', D: 'HANEDAN SOKAK' },
-  192: { A: 'YAVUZ SULTAN SELİM CAD. KUZEY', B: 'VATAN SOKAK', C: 'YAVUZ SULTAN SELİM CAD. GÜNEY', D: 'ORKUN SOKAK' },
-  194: { A: 'S.A BEDÜK CAD. KUZEY', B: 'VATAN SOKAK BATI', C: 'S.A BEDÜK CAD. GÜNEY', D: 'VATAN SOKAK DOĞU' },
-}
+const ARM_NAMES = ARM_DISPLAY_NAMES
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Yardımcı Fonksiyonlar
@@ -53,6 +43,40 @@ export class PhasesService {
     private readonly pythonModel: PythonModelService,
     private readonly calculator: PhaseCalculatorService,
   ) {}
+
+  /**
+   * Geri dönük MA tahmini: her slot için yalnızca geçmiş slotlar kullanılır.
+   * slot i tahmini = (actual[i-1] + actual[max(0, i-2)]) / 2
+   * Veri sızıntısı yoktur.
+   */
+  private buildFallbackPredictionSeries(
+    dataByJunction: Record<number, Array<Record<string, string | number>>>,
+    completedIdx: number,
+  ): Record<number, Record<string, number[]>> {
+    const result: Record<number, Record<string, number[]>> = {}
+    for (const [jidStr, arms] of Object.entries(dataByJunction)) {
+      const armSeries: Record<string, number[]> = {}
+      for (const armData of arms) {
+        const direction = String(armData['edge_direction'] ?? '').trim().toUpperCase()
+        if (!direction) continue
+        const series: number[] = []
+        for (let i = 0; i <= completedIdx; i++) {
+          if (i === 0) {
+            series.push(Math.max(0, Number(armData['0'] ?? 0)))
+          } else {
+            const prev1 = Number(armData[String(i - 1)] ?? 0)
+            const prev2 = Number(armData[String(Math.max(0, i - 2))] ?? 0)
+            series.push(Math.max(0, Math.round((prev1 + prev2) / 2)))
+          }
+        }
+        armSeries[direction] = series
+      }
+      if (Object.keys(armSeries).length > 0) {
+        result[Number(jidStr)] = armSeries
+      }
+    }
+    return result
+  }
 
   /** Moving average fallback using current + previous time slot. */
   private movingAvgFallback(
@@ -97,13 +121,13 @@ export class PhasesService {
         if (key.startsWith('_') || typeof value !== 'object') continue
 
         const armData = value as {
-          green: number; yellow: number; red: number; cycle_time: number
+          arm_name: string; green: number; yellow: number; red: number; cycle_time: number
           vehicle_count: number; lanes: number; load: number; status: 'low' | 'medium' | 'high'
         }
 
         arms.push({
           arm: key,
-          armName: armNameMap[key] ?? `Kol ${key}`,
+          armName: armData.arm_name ?? (armNameMap[key] ?? `Kol ${key}`),
           vehicleCount: armData.vehicle_count,
           lanes: armData.lanes,
           load: armData.load,
@@ -161,6 +185,26 @@ export class PhasesService {
     const regionPhases = this.calculator.computeRegionPhases(predictions, region)
     const junctions = this.buildJunctionList(regionPhases, region)
 
+    // ── Faz Serisi: gün başından mevcut dilime kadar her slot için faz önerisi ──
+    let phaseSeries: Record<number, PhaseSeriesItem[]> | undefined
+
+    if (dataByJunction) {
+      const completedIdx = Math.max(0, minuteIdx - 1)
+      let predictionSeries: Record<number, Record<string, number[]>> | null = null
+
+      if (config.useModel) {
+        const seriesResult = await this.pythonModel.predictSeries(dataByJunction, completedIdx)
+        predictionSeries = seriesResult?.series ?? null
+      }
+
+      if (!predictionSeries) {
+        // Fallback: backward-only MA (veri sızıntısı yok)
+        predictionSeries = this.buildFallbackPredictionSeries(dataByJunction, completedIdx)
+      }
+
+      phaseSeries = this.calculator.computePhaseSeries(predictionSeries, region, ARM_NAMES)
+    }
+
     return {
       region,
       city: config.city,
@@ -169,6 +213,7 @@ export class PhasesService {
       predictionSource,
       kayseriApiStatus: kayseriOk ? 'connected' : 'unavailable',
       junctions,
+      phase_series: phaseSeries,
     }
   }
 

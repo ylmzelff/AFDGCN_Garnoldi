@@ -1,139 +1,158 @@
-/**
- * Kayseri Belediye API HTTP İstemcisi
- * =====================================
- * JWT token yönetimi ile port 9000'daki Kayseri API'sine bağlanır.
- * Python kayseri_client.py'nin TypeScript karşılığı.
+﻿/**
+ * AusTKM Kayseri Belediye API HTTP Istemcisi
+ * ============================================
+ * Gercek AusTKM API'sine static Bearer JWT token ile baglanir.
+ * SSL sertifikasi self-signed oldugu icin dogrulama atlanmaktadir.
+ *
+ * Endpoint: GET /api/SensorVerileri?bolgeAdi=ILDEM&tarih=YYYY-MM-DD
+ * Auth:     Bearer <AUSTM_API_TOKEN>
  */
 
 import axios, { type AxiosInstance } from 'axios'
+import https from 'https'
 import { env } from '../../common/config'
+import { REGION_CONFIG } from './real-time-predictor.service'
 
-const TOKEN_REFRESH_MARGIN_MS = 300_000 // 5 dakika önce yenile
+/** "HH:MM" -> 10 dakikalik dilim indeksi (0..143) */
+function timeToSlotIndex(hhmm: string): number {
+  const colonIdx = hhmm.indexOf(':')
+  const h = parseInt(hhmm.slice(0, colonIdx), 10)
+  const m = parseInt(hhmm.slice(colonIdx + 1), 10)
+  return h * 6 + Math.floor(m / 10)
+}
 
 export type ArmData = Record<string, string | number>
 
+// -----------------------------------------------------------------------------
+// AusTKM API Tipleri
+// -----------------------------------------------------------------------------
+
+interface AusTkmResponse {
+  success: boolean
+  bolgeAdi?: string
+  tarih?: string
+  toplamKayit?: number
+  data: AusTkmSensorItem[]
+}
+
+interface AusTkmSensorItem {
+  intersectionId: number
+  edgeDirection: string
+  edgeName?: string
+  saatlikVeriler: Record<string, number>
+}
+
+// -----------------------------------------------------------------------------
+// Servis
+// -----------------------------------------------------------------------------
+
 export class KayseriClientService {
-  private baseUrl: string
-  private username: string
-  private password: string
+  private readonly baseUrl: string
+  private readonly token: string
+  private readonly http: AxiosInstance
 
-  private token: string | null = null
-  private tokenExpiresAt = 0
+  constructor(baseUrl?: string, token?: string) {
+    this.baseUrl = (baseUrl ?? env.austmApiUrl).replace(/\/$/, '')
+    this.token = token ?? env.austmApiToken
 
-  private http: AxiosInstance
-
-  constructor(
-    baseUrl?: string,
-    username?: string,
-    password?: string,
-  ) {
-    this.baseUrl = (baseUrl ?? env.kayseriApiUrl).replace(/\/$/, '')
-    this.username = username ?? env.kayseriUsername
-    this.password = password ?? env.kayseriPassword
+    // Belediye sunucusu self-signed sertifika kullandigindan SSL dogrulamasi atlaniyor
+    const httpsAgent = new https.Agent({ rejectUnauthorized: false })
 
     this.http = axios.create({
       baseURL: this.baseUrl,
       timeout: 30_000,
-      headers: { 'Content-Type': 'application/json' },
+      httpsAgent,
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        Accept: 'application/json',
+      },
     })
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Auth
-  // ─────────────────────────────────────────────────────────────────────────
+  // ---------------------------------------------------------------------------
+  // Veri Cekme
+  // ---------------------------------------------------------------------------
 
-  async ensureAuthenticated(): Promise<void> {
-    if (this.isTokenValid()) return
-    await this.login()
-  }
-
-  private isTokenValid(): boolean {
-    return this.token !== null && Date.now() < this.tokenExpiresAt - TOKEN_REFRESH_MARGIN_MS
-  }
-
-  private async login(): Promise<void> {
-    const resp = await this.http.post<{ access_token: string; expires_in?: number }>(
-      '/auth/login',
-      { username: this.username, password: this.password },
-    )
-    this.token = resp.data.access_token
-    const expiresIn = (resp.data.expires_in ?? 86400) * 1000
-    this.tokenExpiresAt = Date.now() + expiresIn
-    console.info(`[kayseri-client] Login başarılı (expires_in=${resp.data.expires_in ?? 86400}s)`)
-  }
-
-  private authHeader(): Record<string, string> {
-    return { Authorization: `Bearer ${this.token}` }
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Veri Çekme
-  // ─────────────────────────────────────────────────────────────────────────
-
+  /**
+   * Belirli bir bolge icin bugunun anlik trafik verisini ceker.
+   * Donen format: Record<intersectionId, ArmData[]>
+   * Her ArmData: { edge_direction, edge_name, "0": count, ..., "143": count }
+   * Slot indeksi: saat*6 + dakika/10  (ornek: 07:30 -> 45)
+   */
   async fetchRegion(
     region: string,
-    city = 'kayseri',
+    _city = 'kayseri',
   ): Promise<Record<number, ArmData[]>> {
-    await this.ensureAuthenticated()
+    const regionKey = region.toLowerCase()
+    const regionCfg = REGION_CONFIG[regionKey]
+    const bolgeAdi = regionCfg?.bolgeAdi || regionKey.toUpperCase()
 
-    try {
-      const resp = await this.http.get<object>(`/${city}/${region}`, {
-        headers: this.authHeader(),
-      })
-      return this.parseRegionResponse(resp.data)
-    } catch (err: unknown) {
-      const status = (err as { response?: { status: number } }).response?.status
-      if (status === 401) {
-        console.warn('[kayseri-client] Token reddedildi, yeniden login deneniyor...')
-        this.token = null
-        await this.login()
-        const resp = await this.http.get<object>(`/${city}/${region}`, {
-          headers: this.authHeader(),
-        })
-        return this.parseRegionResponse(resp.data)
-      }
-      throw err
-    }
-  }
+    const tarih = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
 
-  private parseRegionResponse(payload: object): Record<number, ArmData[]> {
-    const result: Record<number, ArmData[]> = {}
-    const data = payload as { junctions?: Array<{ junction_id: number; time_slots?: unknown[] }> }
+    console.info(`[kayseri-client] AusTKM veri cekiliyor: bolgeAdi=${bolgeAdi}, tarih=${tarih}`)
 
-    if (!data.junctions) return result
+    const resp = await this.http.get<AusTkmResponse>('/api/SensorVerileri', {
+      params: { bolgeAdi, tarih },
+    })
 
-    for (const junction of data.junctions) {
-      const jid = junction.junction_id
-      const slots = junction.time_slots ?? []
-
-      const byArm: Record<string, ArmData> = {}
-      for (const slot of slots as Array<Record<string, unknown>>) {
-        const direction = String(slot['edge_direction'] ?? '').trim().toUpperCase()
-        if (!direction) continue
-
-        if (!byArm[direction]) byArm[direction] = { edge_direction: direction }
-
-        const slotIdx = slot['slot_index'] !== undefined ? String(slot['slot_index']) : null
-        if (slotIdx !== null) {
-          byArm[direction][slotIdx] = Number(slot['vehicle_count'] ?? 0)
-        }
-      }
-
-      if (Object.keys(byArm).length > 0) {
-        result[jid] = Object.values(byArm)
-      }
+    if (!resp.data.success || !Array.isArray(resp.data.data)) {
+      throw new Error(
+        `AusTKM API basarisiz yanit: ${JSON.stringify(resp.data).slice(0, 200)}`,
+      )
     }
 
-    return result
+    console.info(
+      `[kayseri-client] ${bolgeAdi}: ${resp.data.toplamKayit ?? resp.data.data.length} kayit alindi`,
+    )
+
+    return this.parseResponse(resp.data.data)
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Durum & Yönetim
-  // ─────────────────────────────────────────────────────────────────────────
+  private parseResponse(items: AusTkmSensorItem[]): Record<number, ArmData[]> {
+    // intersectionId -> { edgeDirection -> ArmData }
+    const byJunction: Record<number, Record<string, ArmData>> = {}
+
+    for (const item of items) {
+      const jid = item.intersectionId
+      if (!byJunction[jid]) byJunction[jid] = {}
+
+      const direction = item.edgeDirection.trim().toUpperCase()
+
+      const armData: ArmData = {
+        edge_direction: direction,
+        edge_name: item.edgeName ?? '',
+      }
+
+      // "HH:MM" -> slot indeksi -> count
+      for (const [timeKey, count] of Object.entries(item.saatlikVeriler ?? {})) {
+        const slotIdx = timeToSlotIndex(timeKey)
+        armData[String(slotIdx)] = Number(count)
+      }
+
+      byJunction[jid][direction] = armData
+    }
+
+    const output: Record<number, ArmData[]> = {}
+    for (const [jidStr, armMap] of Object.entries(byJunction)) {
+      output[Number(jidStr)] = Object.values(armMap)
+    }
+
+    return output
+  }
+
+  // ---------------------------------------------------------------------------
+  // Durum & Yonetim
+  // ---------------------------------------------------------------------------
 
   async healthCheck(): Promise<boolean> {
     try {
-      await this.http.get('/health', { timeout: 5000 })
+      const tarih = new Date().toISOString().slice(0, 10)
+      // İlk mevcut bölgenin bolgeAdi'sini kullan, yoksa fallback
+      const firstBolgeAdi = Object.values(REGION_CONFIG)[0]?.bolgeAdi ?? '\u0130LDEM'
+      await this.http.get('/api/SensorVerileri', {
+        params: { bolgeAdi: firstBolgeAdi, tarih },
+        timeout: 5_000,
+      })
       return true
     } catch {
       return false
@@ -143,39 +162,30 @@ export class KayseriClientService {
   getStatus(): Record<string, unknown> {
     return {
       base_url: this.baseUrl,
-      authenticated: this.isTokenValid(),
-      token_expires_at: this.tokenExpiresAt > 0 ? new Date(this.tokenExpiresAt).toISOString() : null,
+      token_configured: this.token.length > 0,
+      api: 'AusTKM',
     }
-  }
-
-  updateCredentials(username: string, password: string): void {
-    this.username = username
-    this.password = password
-    this.token = null
-    this.tokenExpiresAt = 0
   }
 
   getBaseUrl(): string {
     return this.baseUrl
   }
 
-  getCredentials(): { username: string; password: string } {
-    return { username: this.username, password: this.password }
+  /** Legacy uyumluluk - artık no-op */
+  updateCredentials(_username: string, _password: string): void {
+    console.warn('[kayseri-client] updateCredentials: AusTKM static token kullaniyor, bu islem etkisiz.')
   }
 
-  async updateBaseUrl(url: string): Promise<void> {
-    this.baseUrl = url.replace(/\/$/, '')
-    this.http = axios.create({
-      baseURL: this.baseUrl,
-      timeout: 30_000,
-      headers: { 'Content-Type': 'application/json' },
-    })
-    this.token = null
-    this.tokenExpiresAt = 0
-    try {
-      await this.ensureAuthenticated()
-    } catch (err) {
-      console.warn('[kayseri-client] Yeni URL ile login hatası:', err)
+  /** AusTKM statik token kullandigindan authenticate gerekmez - uyumluluk icin */
+  async ensureAuthenticated(): Promise<void> {
+    if (!this.token) {
+      throw new Error('[kayseri-client] AUSTM_API_TOKEN tanimlanmamis!')
     }
   }
+
+  /** AusTKM icin base URL guncellemesi - uyumluluk icin */
+  async updateBaseUrl(url: string): Promise<void> {
+    console.info(`[kayseri-client] updateBaseUrl: ${url} (bilgi amacli, AusTKM statik URL kullanir)`)
+  }
 }
+

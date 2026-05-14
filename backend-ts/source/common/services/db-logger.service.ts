@@ -1,5 +1,6 @@
 import prisma from '../../database/prisma'
 import type { RegionPhaseResponse } from '../../phases/types/phases.types'
+import type { RegionPredictionResult } from '../../predict/services/real-time-predictor.service'
 
 let dbEnabled = false
 
@@ -16,21 +17,46 @@ function minuteIndex(): number {
   return now.getHours() * 6 + Math.floor(now.getMinutes() / 10)
 }
 
-export async function logPrediction(response: RegionPhaseResponse): Promise<void> {
+export async function logPrediction(response: RegionPhaseResponse | RegionPredictionResult): Promise<void> {
   if (!dbEnabled) return
 
   try {
-    const totalVehicles = response.junctions.reduce((sum, j) => sum + j.totalVehicles, 0)
+    // RegionPhaseResponse (has .junctions[]) veya RegionPredictionResult (has .predictions{}) olabilir
+    let totalVehicles = 0
+    let junctionCount = 0
+    let timeLabel = ''
+    let predictionSource = ''
+    let kayseriApiStatus = false
+    let city = 'kayseri'
+
+    if ('junctions' in response && Array.isArray(response.junctions)) {
+      // RegionPhaseResponse
+      totalVehicles = response.junctions.reduce((sum, j) => sum + (j.totalVehicles ?? 0), 0)
+      junctionCount = response.junctions.length
+      timeLabel = response.timeLabel ?? ''
+      predictionSource = response.predictionSource ?? ''
+      kayseriApiStatus = response.kayseriApiStatus ?? false
+      city = response.city ?? 'kayseri'
+    } else if ('predictions' in response && response.predictions) {
+      // RegionPredictionResult
+      totalVehicles = Object.values(response.predictions)
+        .flatMap((arms) => Object.values(arms as Record<string, number>))
+        .reduce((sum, v) => sum + v, 0)
+      junctionCount = Object.keys(response.predictions).length
+      timeLabel = response.time_label ?? ''
+      predictionSource = response.source ?? ''
+      kayseriApiStatus = response.kayseri_ok ?? false
+    }
 
     await prisma.phasePrediction.create({
       data: {
         region: response.region,
-        city: response.city,
-        timeLabel: response.timeLabel,
+        city,
+        timeLabel,
         minuteIndex: minuteIndex(),
-        predictionSource: response.predictionSource,
-        kayseriApiStatus: response.kayseriApiStatus,
-        junctionCount: response.junctions.length,
+        predictionSource,
+        kayseriApiStatus,
+        junctionCount,
         totalVehicles,
         payload: response as unknown as object,
       },

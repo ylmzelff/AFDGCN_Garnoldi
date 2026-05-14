@@ -74,6 +74,7 @@ model RegionConfig {
   id          String   @id @default(uuid())
   city        String   @db.VarChar(50)
   region      String   @db.VarChar(50)
+  bolgeAdi    String   @default("") @map("bolge_adi") @db.VarChar(100)
   description String   @default("") @db.VarChar(200)
   junctionIds Json     @map("junction_ids")
   useModel    Boolean  @default(false) @map("use_model")
@@ -94,7 +95,8 @@ model ModelVersion {
   description String   @default("") @db.VarChar(500)
   city        String   @db.VarChar(50)
   region      String   @db.VarChar(50)
-  filePath    String   @map("file_path") @db.VarChar(500)
+  filePath    String   @default("") @map("file_path") @db.VarChar(500)
+  weights     Bytes?
   numNodes    Int      @map("num_nodes")
   lag         Int      @default(1)
   horizon     Int      @default(1)

@@ -86,14 +86,14 @@ async function startup(): Promise<void> {
 
     // ── Bölge konfigürasyonu seed ──────────────────────────────────────────
     const defaultRegions = [
-      { city: 'kayseri', region: 'ildem',      junctionIds: [89, 187, 95, 121, 184, 188, 117, 192, 194], useModel: true,  description: 'İldem (AFDGCN)' },
-      { city: 'kayseri', region: 'tuna',        junctionIds: [5, 3, 87, 25, 26, 27, 7],                   useModel: false, description: 'Tuna (Moving Average)' },
-      { city: 'kayseri', region: 'kizilirmak',  junctionIds: [130, 38, 176],                               useModel: false, description: 'Kızılırmak (Moving Average)' },
+      { city: 'kayseri', region: 'ildem',      bolgeAdi: '\u0130LDEM',     junctionIds: [89, 187, 95, 121, 184, 188, 117, 192, 194], useModel: true,  description: 'İldem (AFDGCN)' },
+      { city: 'kayseri', region: 'tuna',        bolgeAdi: 'TUNA',          junctionIds: [5, 3, 87, 25, 26, 27, 7],                   useModel: false, description: 'Tuna (Moving Average)' },
+      { city: 'kayseri', region: 'kizilirmak',  bolgeAdi: 'KIZILIRMAK',   junctionIds: [130, 38, 176],                               useModel: false, description: 'Kızılırmak (Moving Average)' },
     ]
     for (const r of defaultRegions) {
       await prisma.regionConfig.upsert({
         where: { city_region: { city: r.city, region: r.region } },
-        update: {},
+        update: { bolgeAdi: r.bolgeAdi },
         create: { ...r, junctionIds: r.junctionIds },
       })
     }
@@ -104,39 +104,67 @@ async function startup(): Promise<void> {
       junctionIds: r.junctionIds as number[],
       useModel: r.useModel,
       description: r.description,
+      bolgeAdi: r.bolgeAdi,
     })))
 
     // ── Model versiyon seed ────────────────────────────────────────────────
-    const projectRoot = path.join(__dirname, '..')
-    const defaultModelPath = path.join(projectRoot, 'saved_models', 'kayseri_ildem_v1.pth')
-    await prisma.modelVersion.upsert({
-      where: { city_region_name: { city: 'kayseri', region: 'ildem', name: 'kayseri_ildem_v1' } },
-      update: {},
-      create: {
-        name: 'kayseri_ildem_v1',
-        description: 'Kayseri İldem bölgesi AFDGCN modeli (v1)',
-        city: 'kayseri', region: 'ildem',
-        filePath: defaultModelPath,
-        numNodes: 19, lag: 1, horizon: 1,
-        scalerMean: 28.53, scalerStd: 38.72,
-        isActive: true,
-      },
-    })
+    // Eğer DB'de model yoksa veya weights null ise disk'teki dummy .pth ile seed et
+    {
+      const projectRoot = path.join(__dirname, '..')
+      const dummyPthPath = path.join(projectRoot, 'saved_models', 'kayseri_ildem_34_dummy.pth')
+      const hasDummy = require('fs').existsSync(dummyPthPath)
 
-    // Aktif model versiyonunu Python sunucusuna yükle
+      const existingModel = await prisma.modelVersion.findUnique({
+        where: { city_region_name: { city: 'kayseri', region: 'ildem', name: 'kayseri_ildem_v1' } },
+        select: { id: true, weights: true },
+      })
+
+      if (!existingModel && hasDummy) {
+        // İlk kez: oluştur
+        const weights = require('fs').readFileSync(dummyPthPath) as Buffer
+        await prisma.modelVersion.create({
+          data: {
+            name: 'kayseri_ildem_v1',
+            description: 'Kayseri İldem bölgesi AFDGCN modeli (v1, seed)',
+            city: 'kayseri', region: 'ildem',
+            filePath: '',
+            weights,
+            numNodes: 34, lag: 1, horizon: 1,
+            scalerMean: 28.53, scalerStd: 38.72,
+            isActive: true,
+          },
+        })
+        console.info('🌱 Seed model DB\'ye yüklendi (kayseri_ildem_v1, 34 node)')
+      } else if (existingModel && !existingModel.weights && hasDummy) {
+        // Eski kayıt: weights ekle + numNodes güncelle
+        const weights = require('fs').readFileSync(dummyPthPath) as Buffer
+        await prisma.modelVersion.update({
+          where: { id: existingModel.id },
+          data: { weights, numNodes: 34, lag: 1, filePath: '' },
+        })
+        console.info('🔄 Mevcut model kaydı 34-node dummy weights ile güncellendi')
+      }
+    }
+
+    // ── Aktif model DB bytes'ından Python sunucusuna yükle ─────────────────
     const activeModel = await prisma.modelVersion.findFirst({
       where: { city: 'kayseri', region: 'ildem', isActive: true },
+      select: {
+        id: true, name: true, weights: true, filePath: true,
+        numNodes: true, lag: true, horizon: true, scalerMean: true, scalerStd: true,
+      },
     })
     if (activeModel) {
-      const loadResult = await pythonModel.loadModel({
-        path: activeModel.filePath,
+      const loadResult = await pythonModel.loadModelFromBytes({
+        weights: activeModel.weights,
+        filePath: activeModel.filePath,
         numNodes: activeModel.numNodes,
         lag: activeModel.lag,
         horizon: activeModel.horizon,
         scalerMean: activeModel.scalerMean,
         scalerStd: activeModel.scalerStd,
       })
-      console.info(`🤖 Model yükleme: ${loadResult.message}`)
+      console.info(`🤖 Model yükleme (${activeModel.name}): ${loadResult.message}`)
     }
 
     // Model startup event

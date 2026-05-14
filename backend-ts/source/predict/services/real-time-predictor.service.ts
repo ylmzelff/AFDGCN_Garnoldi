@@ -8,6 +8,7 @@
 import type { KayseriClientService, ArmData } from './kayseri-client.service'
 import type { PythonModelService } from './python-model.service'
 import type { PhaseCalculatorService } from '../../phases/services/phase-calculator.service'
+import type { PhaseSeriesItem } from '../../phases/types/phases.types'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Bölge Konfigürasyonu (DB'den startup'ta yüklenir — başlangıçta boş)
@@ -18,6 +19,8 @@ export interface RegionConfigItem {
   junctionIds: number[]
   useModel: boolean
   description: string
+  /** API bolgeAdi parametresi (örn. "İLDEM", "TUNA", "KIZILIRMAK") — DB'den gelir */
+  bolgeAdi: string
 }
 
 export const REGION_CONFIG: Record<string, RegionConfigItem> = {}
@@ -27,10 +30,16 @@ export const REGION_CONFIG: Record<string, RegionConfigItem> = {}
  * server.ts startup()'ta çağrılır.
  */
 export function loadRegionConfigs(
-  configs: Array<{ city: string; region: string; junctionIds: number[]; useModel: boolean; description: string }>,
+  configs: Array<{ city: string; region: string; junctionIds: number[]; useModel: boolean; description: string; bolgeAdi: string }>,
 ): void {
   for (const c of configs) {
-    REGION_CONFIG[c.region] = { city: c.city, junctionIds: c.junctionIds, useModel: c.useModel, description: c.description }
+    REGION_CONFIG[c.region] = {
+      city: c.city,
+      junctionIds: c.junctionIds,
+      useModel: c.useModel,
+      description: c.description,
+      bolgeAdi: c.bolgeAdi,
+    }
   }
   console.info(`[region-config] ${configs.length} bölge yüklendi: ${configs.map((c) => c.region).join(', ')}`)
 }
@@ -87,6 +96,23 @@ export interface RegionPredictionResult {
   kayseri_ok: boolean
   phases: Record<number, unknown>
   junction_count: number
+  /** Gün başından bugüne tüm gerçek araç sayıları — grafik için */
+  time_series?: Record<number, Record<string, number[]>>
+  /** time_series dizisinin hangi slot index'ten başladığı (her zaman 0) */
+  time_series_start_slot?: number
+  /** Anlık gerçek araç sayısı — grafik güncelleme için */
+  raw_data?: Record<number, Record<string, number>>
+  /**
+   * Her slot için bir önceki slottan üretilen MA tahmini + son slotta AFDGCN.
+   * Frontend turuncu çizgi için kullanır. time_series ile aynı indeks yapısı.
+   */
+  prediction_series?: Record<number, Record<string, number[]>>
+  /**
+   * prediction_series'ten üretilen faz önerileri: her 10 dk'lık slot için
+   * tahmin edilen araç sayıları Webster faz hesaplayıcısına beslenir.
+   * junctionId → [PhaseSeriesItem per slot]
+   */
+  phase_series?: Record<number, PhaseSeriesItem[]>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -112,6 +138,95 @@ export class RealTimePredictorService {
     const slot = Math.floor(now.getMinutes() / 10) * 10
     return `${String(now.getHours()).padStart(2, '0')}:${String(slot).padStart(2, '0')}`
   }
+
+  /** Gün başından (slot 0) bugünkü dilimine kadar gerçek araç sayılarını döner */
+  private buildTimeSeries(
+    dataByJunction: Record<number, ArmData[]>,
+    currentIdx: number,
+  ): Record<number, Record<string, number[]>> {
+    const result: Record<number, Record<string, number[]>> = {}
+    for (const [jidStr, arms] of Object.entries(dataByJunction)) {
+      const armSeries: Record<string, number[]> = {}
+      for (const armData of arms) {
+        const direction = String(armData['edge_direction'] ?? '').trim().toUpperCase()
+        if (!direction) continue
+        const series: number[] = []
+        for (let i = 0; i <= currentIdx; i++) {
+          series.push(Number(armData[String(i)] ?? 0))
+        }
+        armSeries[direction] = series
+      }
+      if (Object.keys(armSeries).length > 0) {
+        result[Number(jidStr)] = armSeries
+      }
+    }
+    return result
+  }
+
+  /** slot index → "HH:MM" dönüştürür */
+  private slotToLabel(slotIdx: number): string {
+    const hh = Math.floor(slotIdx / 6)
+    const mm = (slotIdx % 6) * 10
+    return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
+  }
+
+  /** Anlık (mevcut dilim) gerçek araç sayısını döner (grafik güncelleme için) */
+  private buildRawData(
+    dataByJunction: Record<number, ArmData[]>,
+    currentIdx: number,
+  ): Record<number, Record<string, number>> {
+    const result: Record<number, Record<string, number>> = {}
+    for (const [jidStr, arms] of Object.entries(dataByJunction)) {
+      const armValues: Record<string, number> = {}
+      for (const armData of arms) {
+        const direction = String(armData['edge_direction'] ?? '').trim().toUpperCase()
+        if (!direction) continue
+        armValues[direction] = Number(armData[String(currentIdx)] ?? 0)
+      }
+      if (Object.keys(armValues).length > 0) {
+        result[Number(jidStr)] = armValues
+      }
+    }
+    return result
+  }
+
+  /**
+   * TS-tarafı yedek tahmin serisi: yalnızca geçmiş veriler kullanılır, veri sızıntısı yok.
+   * slot i tahmini = (actual[i-1] + actual[max(0, i-2)]) / 2
+   * Model sunucusu erişilemez olduğunda veya model kullanılmayan bölgelerde devreye girer.
+   */
+  private buildFallbackPredictionSeries(
+    dataByJunction: Record<number, ArmData[]>,
+    completedIdx: number,
+  ): Record<number, Record<string, number[]>> {
+    const result: Record<number, Record<string, number[]>> = {}
+    for (const [jidStr, arms] of Object.entries(dataByJunction)) {
+      const jid = Number(jidStr)
+      const armSeries: Record<string, number[]> = {}
+      for (const armData of arms) {
+        const direction = String(armData['edge_direction'] ?? '').trim().toUpperCase()
+        if (!direction) continue
+        const series: number[] = []
+        for (let i = 0; i <= completedIdx; i++) {
+          if (i === 0) {
+            // İlk slot: geçmiş yok, gerçek değeri kullan
+            series.push(Math.max(0, Number(armData['0'] ?? 0)))
+          } else {
+            // Yalnızca geçmiş slotlara bak (veri sızıntısı yok)
+            const prev1 = Number(armData[String(i - 1)] ?? 0)
+            const prev2 = Number(armData[String(Math.max(0, i - 2))] ?? 0)
+            series.push(Math.max(0, Math.round((prev1 + prev2) / 2)))
+          }
+        }
+        armSeries[direction] = series
+      }
+      if (Object.keys(armSeries).length > 0) {
+        result[jid] = armSeries
+      }
+    }
+    return result
+  }
+
 
   private movingAverageForRegion(
     dataByJunction: Record<number, ArmData[]>,
@@ -181,6 +296,38 @@ export class RealTimePredictorService {
       kayseri_ok: kayseriOk,
       phases,
       junction_count: Object.keys(predictions).length,
+    }
+
+    if (dataByJunction) {
+      // currentIdx henüz sayılıyor (0 veya eksik) → son tamamlanan slot bir önceki
+      const completedIdx = Math.max(0, minuteIdx - 1)
+      result.time_series = this.buildTimeSeries(dataByJunction, completedIdx)
+      result.time_series_start_slot = 0
+      result.raw_data = this.buildRawData(dataByJunction, completedIdx)
+
+      if (config.useModel) {
+        // Model kullanan bölgeler: Python sunucusundan gerçek AFDGCN rolling tahminlerini al
+        const seriesResult = await this.pythonModel.predictSeries(dataByJunction, completedIdx)
+        if (seriesResult) {
+          result.prediction_series = seriesResult.series
+          // Kaynak etiketini model sunucusu yanıtıyla güncelle
+          result.source = seriesResult.source
+        } else {
+          // Fallback: yalnızca geçmiş verilerle hesaplanan MA (veri sızıntısı yok)
+          result.prediction_series = this.buildFallbackPredictionSeries(dataByJunction, completedIdx)
+        }
+      } else {
+        // Model kullanılmayan bölgeler: TS-tarafı backward-looking MA
+        result.prediction_series = this.buildFallbackPredictionSeries(dataByJunction, completedIdx)
+      }
+
+      // Tahmin serisi → Webster faz önerisi serisi
+      if (result.prediction_series) {
+        result.phase_series = this.phaseCalculator.computePhaseSeries(
+          result.prediction_series,
+          region,
+        )
+      }
     }
 
     this.cache.set(region, result)

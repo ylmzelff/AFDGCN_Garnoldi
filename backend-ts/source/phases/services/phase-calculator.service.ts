@@ -5,6 +5,8 @@
  * Python phase_calculator.py'nin TypeScript karşılığı.
  */
 
+import type { ArmPhase, PhaseSeriesItem } from '../types/phases.types'
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Sabitler
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,11 +51,25 @@ export const JUNCTION_NAMES: Record<number, string> = {
   25: 'Tuna 25', 26: 'Tuna 26', 27: 'Tuna 27', 7: 'Tuna 7',
 }
 
+/** Kavşak kol görüntüleme adları — bölge/şehir bağımsız ortak kayıt */
+export const ARM_DISPLAY_NAMES: Record<number, Record<string, string>> = {
+  89:  { A: 'SİVAS BULVARI-SİVAS YÖNÜ', B: 'GESİ CAD.', C: 'SİVAS BULV-ŞEHİR MERKEZİ', D: '381. SOKAK' },
+  187: { A: '822. SK', B: 'GESİ CAD. DOĞU', C: 'KOCASİNAN CAD.', D: 'GESİ CAD. BATI' },
+  95:  { A: 'OSMAN ÖZCAN CAD.', B: 'GESİ CAD DOĞU', C: 'MARKETLER ÇIKIŞ', D: 'GESİ CAD BATI' },
+  121: { A: '832. CD', B: 'GESİ CAD. DOĞU', C: 'KADİR HAS BUL.', D: 'GESİ CAD BATI' },
+  184: { A: 'DİNÇER SOKAK', B: 'ALPARSLAN TÜRKEŞ BUL.', D: 'GESİ CAD' },
+  188: { A: 'DİNÇER SOKAK KUZEY', B: 'HANEDAN SOKAK', C: 'DİNÇER SOKAK GÜNEY', D: 'FETİH SOKAK' },
+  117: { A: 'DÜNDAR TAŞER CAD. KUZEY', C: 'DÜNDAR TAŞER CAD. GÜNEY', D: 'HANEDAN SOKAK' },
+  192: { A: 'YAVUZ SULTAN SELİM CAD. KUZEY', B: 'VATAN SOKAK', C: 'YAVUZ SULTAN SELİM CAD. GÜNEY', D: 'ORKUN SOKAK' },
+  194: { A: 'S.A BEDÜK CAD. KUZEY', B: 'VATAN SOKAK BATI', C: 'S.A BEDÜK CAD. GÜNEY', D: 'VATAN SOKAK DOĞU' },
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Tek Kavşak Faz Hesabı
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface ArmPhaseData {
+  arm_name: string
   green: number
   yellow: number
   red: number
@@ -79,6 +95,7 @@ export class PhaseCalculatorService {
   ): JunctionPhaseData {
     const baseCfg: Record<string, number> =
       (REGION_LANE_CONFIGS[region] ?? {})[junctionId] ?? {}
+    const armDisplayNames = ARM_DISPLAY_NAMES[junctionId] ?? {}
 
     const laneCfg: Record<string, number> = {}
     for (const arm of Object.keys(armCounts)) {
@@ -139,6 +156,7 @@ export class PhaseCalculatorService {
         p.count < THRESH_LOW ? 'low' : p.count < THRESH_HIGH ? 'medium' : 'high'
 
       result[p.arm] = {
+        arm_name: armDisplayNames[p.arm] ?? `Kol ${p.arm}`,
         green,
         yellow,
         red,
@@ -162,6 +180,84 @@ export class PhaseCalculatorService {
     for (const [jidStr, armCounts] of Object.entries(regionPredictions)) {
       result[Number(jidStr)] = this.computePhases(Number(jidStr), armCounts, region)
     }
+    return result
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Faz Serisi — tahmin edilen araç sayıları → her 10 dk'lık slot için faz
+  // ─────────────────────────────────────────────────────────────────────────
+
+  private slotToLabel(slot: number): string {
+    const hh = Math.floor(slot / 6)
+    const mm = (slot % 6) * 10
+    return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
+  }
+
+  /**
+   * Her 10 dakikalık slot için tahmin edilen araç sayılarını Webster faz
+   * hesaplayıcısına besler ve her slot × kavşak için faz önerisi döner.
+   *
+   * @param predictionSeries  junctionId → kol → [slot0_araç, slot1_araç, …]
+   * @param region            Bölge adı (şerit konfigürasyonu için)
+   * @param armNames          Opsiyonel kol görüntü adları (kavşak → kol → isim)
+   * @returns                 junctionId → [PhaseSeriesItem per slot]
+   */
+  computePhaseSeries(
+    predictionSeries: Record<number, Record<string, number[]>>,
+    region: string = 'ildem',
+    armNames: Record<number, Record<string, string>> = {},
+  ): Record<number, PhaseSeriesItem[]> {
+    const result: Record<number, PhaseSeriesItem[]> = {}
+
+    for (const [jidStr, armSeries] of Object.entries(predictionSeries)) {
+      const jid = Number(jidStr)
+      const armKeys = Object.keys(armSeries)
+      const slotCount = armKeys.length > 0 ? (armSeries[armKeys[0]]?.length ?? 0) : 0
+      const junctionArmNames = armNames[jid] ?? {}
+      const slots: PhaseSeriesItem[] = []
+
+      for (let i = 0; i < slotCount; i++) {
+        // Bu slottaki her kolun tahmin edilen araç sayısı
+        const armCounts: Record<string, number> = {}
+        for (const arm of armKeys) {
+          armCounts[arm] = armSeries[arm]?.[i] ?? 0
+        }
+
+        const phaseData = this.computePhases(jid, armCounts, region)
+        const cycleTime = phaseData['_cycle_time'] as number
+        const totalVehicles = phaseData['_total_vehicles'] as number
+
+        const arms: ArmPhase[] = []
+        for (const [key, value] of Object.entries(phaseData)) {
+          if (key.startsWith('_') || typeof value !== 'object') continue
+          const ad = value as ArmPhaseData
+          arms.push({
+            arm: key,
+            armName: junctionArmNames[key] ?? `Kol ${key}`,
+            vehicleCount: ad.vehicle_count,
+            lanes: ad.lanes,
+            load: ad.load,
+            status: ad.status,
+            green: ad.green,
+            yellow: ad.yellow,
+            red: ad.red,
+            cycleTime: ad.cycle_time,
+          })
+        }
+        arms.sort((a, b) => a.arm.localeCompare(b.arm))
+
+        slots.push({
+          slot_index: i,
+          time_label: this.slotToLabel(i),
+          cycle_time: cycleTime,
+          total_vehicles: totalVehicles,
+          arms,
+        })
+      }
+
+      result[jid] = slots
+    }
+
     return result
   }
 }

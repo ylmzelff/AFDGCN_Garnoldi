@@ -12,14 +12,14 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/auth': 'http://localhost:9001',
-      '/phases': 'http://localhost:9001',
-      '/api': 'http://localhost:9001',
-      '/admin': 'http://localhost:9001',
-      '/health': 'http://localhost:9001',
+      '/api': {
+        target: 'http://localhost:9001',
+        changeOrigin: true,
+      },
       '/ws': {
         target: 'ws://localhost:9001',
         ws: true,
+        changeOrigin: true,
       },
     },
   },

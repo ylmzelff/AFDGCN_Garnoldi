@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -47,8 +47,26 @@ class PredictResponse(BaseModel):
     source: str  # "AFDGCN" | "moving_average"
 
 
+class PredictSeriesRequest(BaseModel):
+    data_by_junction: Dict[int, List[dict]]
+    completed_idx: int
+
+
+class PredictSeriesResponse(BaseModel):
+    prediction_series: Dict[int, Dict[str, List[float]]]
+    source: str  # "AFDGCN" | "moving_average"
+
+
 class LoadModelRequest(BaseModel):
     path: str
+    num_nodes: int = 34
+    lag: int = 1
+    horizon: int = 1
+    scaler_mean: float = 28.53
+    scaler_std: float = 38.72
+
+
+class LoadModelFromBytesRequest(BaseModel):
     num_nodes: int = 34
     lag: int = 1
     horizon: int = 1
@@ -108,6 +126,34 @@ async def predict_next(body: PredictRequest):
         )
 
 
+@app.post("/predict/series", response_model=PredictSeriesResponse)
+async def predict_series(body: PredictSeriesRequest):
+    """
+    Gün başından completed_idx'e kadar her slot için gerçek AFDGCN tahminini döndürür.
+    Her slot için tahmin, o slottan önceki lag gerçek değeri kullanılarak üretilir
+    (data leakage yok).
+    """
+    from ml.prediction_wrapper import (
+        predict_rolling_series,
+        get_model_status,
+    )
+
+    try:
+        series = await predict_rolling_series(
+            body.data_by_junction,
+            body.completed_idx,
+        )
+        status = get_model_status()
+        source = "moving_average" if status.get("fallback_active") else "AFDGCN"
+        return PredictSeriesResponse(prediction_series=series, source=source)
+    except Exception as exc:
+        logger.error("Seri tahmin hatası: %s", exc)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": str(exc)},
+        )
+
+
 @app.get("/model/status")
 async def model_status():
     """Model durumunu döndürür (TypeScript PythonModelService bu endpoint'i çağırır)."""
@@ -135,6 +181,40 @@ async def load_model(body: LoadModelRequest):
         return LoadModelResponse(success=success, message=message)
     except Exception as exc:
         logger.error("Model yükleme hatası: %s", exc)
+        return LoadModelResponse(success=False, message=str(exc))
+
+
+@app.post("/model/load-from-bytes", response_model=LoadModelResponse)
+async def load_model_from_bytes(
+    request: Request,
+    num_nodes: int = 34,
+    lag: int = 1,
+    horizon: int = 1,
+    scaler_mean: float = 28.53,
+    scaler_std: float = 38.72,
+):
+    """
+    Ham .pth byte akışından model yükler (dosya sistemi gerekmez).
+    Content-Type: application/octet-stream
+    Query params: num_nodes, lag, horizon, scaler_mean, scaler_std
+    """
+    from ml.prediction_wrapper import reload_model_from_bytes
+    try:
+        data = await request.body()
+        if not data:
+            return LoadModelResponse(success=False, message="Boş istek gövdesi")
+        success, message = await reload_model_from_bytes(
+            weights=data,
+            num_nodes=num_nodes,
+            lag=lag,
+            horizon=horizon,
+            scaler_mean=scaler_mean,
+            scaler_std=scaler_std,
+        )
+        logger.info("load-from-bytes: success=%s | %s", success, message)
+        return LoadModelResponse(success=success, message=message)
+    except Exception as exc:
+        logger.error("load-from-bytes hatasi: %s", exc)
         return LoadModelResponse(success=False, message=str(exc))
 
 
