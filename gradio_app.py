@@ -524,7 +524,7 @@ def preprocess_excel_and_generate_npz_ui(excel_file):
             header_idx = mask.idxmax() if mask.any() else 0
 
             df = pd.read_excel(xls, sheet_name=sheet, header=header_idx)
-            df["TarihSaat"] = pd.to_datetime(df["Tarih"].astype(str) + " " + df["Saat"].astype(str), errors="coerce")
+            df["TarihSaat"] = pd.to_datetime(df["Tarih"].astype(str) + " " + df["Saat"].astype(str), format="%d.%m.%Y %H:%M", errors="coerce")
             all_datetimes.extend(df["TarihSaat"].dropna().unique())
 
         unique_datetimes = sorted(set(all_datetimes), key=lambda x: datetime_to_minutes(x))
@@ -553,7 +553,7 @@ def preprocess_excel_and_generate_npz_ui(excel_file):
             if df_numeric.empty:
                 continue
 
-            df["TarihSaat"] = pd.to_datetime(df["Tarih"].astype(str) + " " + df["Saat"].astype(str), errors="coerce")
+            df["TarihSaat"] = pd.to_datetime(df["Tarih"].astype(str) + " " + df["Saat"].astype(str), format="%d.%m.%Y %H:%M", errors="coerce")
 
             rows = []
             for _, row in df.iterrows():
