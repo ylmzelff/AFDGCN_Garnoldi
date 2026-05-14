@@ -1034,10 +1034,10 @@ class PositionalEncoding(nn.Module):
         return x
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, embed_size, heads):
+    def __init__(self, embed_size, heads, timesteps=1):
         super(MultiHeadAttention, self).__init__()
         # 计算在时间维度上的多头注意力机制
-        self.positional_encoding = PositionalEncoding(embed_size)
+        self.positional_encoding = PositionalEncoding(embed_size, max_len=timesteps)
         self.embed_size = embed_size
         self.heads = heads
         # 要求嵌入层特征维度可以被heads整除
@@ -1085,7 +1085,9 @@ class GraphAttentionLayer(nn.Module):
     def __init__(self, in_features, out_features, adj, dropout, alpha, concat=True):
         super(GraphAttentionLayer, self).__init__()
         self.dropout = dropout
-        self.adj = adj
+        # register_buffer: state_dict'e kaydedilir, device transfer otomatik olur,
+        # grad hesaplanmaz. Graf yapısı modelin içinde taşınır.
+        self.register_buffer('adj', adj)
         self.in_features = in_features
         self.out_features = out_features
         self.alpha = alpha
@@ -1177,8 +1179,8 @@ class GPR_prop(MessagePassing):
 class GPRGNN(torch.nn.Module):
     def __init__(self, num_node, input_dim, output_dim, hidden, cheb_k, num_layers, embed_dim):
         super(GPRGNN, self).__init__()
-        self.lin1 = Linear(1024, 64)  # (hidden_dim*num_nodes, hidden_dim) 19, 1
-        self.lin2 = Linear(64, 1024)
+        self.lin1 = Linear(2176, 64)  # (hidden_dim*num_nodes, hidden_dim) 19, 1
+        self.lin2 = Linear(64, 2176)
 
         self.prop1 = GPR_prop(cheb_k, 0.5, 'PPR', None)
 
@@ -1211,7 +1213,7 @@ class GPRGNN(torch.nn.Module):
             x = F.dropout(x, p=self.dprate, training=self.training)
             x = self.prop1(x, edge_index)
             x = x.transpose(0, 1)
-            x = x.view(x.size(0), 1, 16, 64)
+            x = x.view(x.size(0), 1, 34, 64)
             x = F.log_softmax(x, dim=3)
             return x
 
@@ -1319,8 +1321,8 @@ class APPNP(MessagePassing):
 class APPNP_Net(torch.nn.Module):
     def __init__(self, num_node, input_dim, output_dim, hidden, cheb_k, num_layers, embed_dim):
         super(APPNP_Net, self).__init__()
-        self.lin1 = Linear(1024, 64)  # (512, 64) for Konya & (1216,64) for Kcetas
-        self.lin2 = Linear(64, 1024)
+        self.lin1 = Linear(2176, 64)  # (512, 64) for Konya & (1216,64) for Kcetas
+        self.lin2 = Linear(64, 2176)
         self.prop1 = APPNP(cheb_k, 0.5, 0.2, False, True, True)
         self.dropout = 0.2
         self.num_layers = num_layers
@@ -1359,7 +1361,7 @@ class APPNP_Net(torch.nn.Module):
         x = x.transpose(0, 1)
         # Reshape it from (5, 1216) to (5, 1, 19, 64) for Kcetas
         # (5, 1, 8, 64) for Konya
-        x = x.reshape(x.size(0), 1, 16, 64)  # Manually reshape to (5, 1, 19, 64)
+        x = x.reshape(x.size(0), 1, 34, 64)  # Manually reshape to (5, 1, 19, 64)
         # print("After reshaping, x size:", x.size())
 
         # Apply log softmax along the appropriate dimension
@@ -1428,7 +1430,7 @@ class Model(nn.Module):
             elif ALGO == 'GPRGNN':
                 self.encoder = GPRGNN(num_node, input_dim, output_dim, hidden_dim, cheb_k, num_layers, embed_dim)
         self.GraphAttentionLayer = GraphAttentionLayer(hidden_dim, hidden_dim, A, dropout=0.5, alpha=0.2, concat=True)
-        self.MultiHeadAttention = MultiHeadAttention(embed_size=hidden_dim, heads=heads)
+        self.MultiHeadAttention = MultiHeadAttention(embed_size=hidden_dim, heads=heads, timesteps=timesteps)
         # predict
         self.nconv = nn.Conv2d(1, self.horizon, kernel_size=(1, 1), bias=True)
         self.end_conv = nn.Conv2d(hidden_dim, 1, kernel_size=(1, 1), bias=True)

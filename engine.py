@@ -188,11 +188,18 @@ class Engine(object):
                     self.logger.info("Validation performance didn\'t improve for {} epochs. "
                                     "Training stops.".format(self.args.early_stop_patience))
                     break
-            # save the best state  if best_state == True:
-            if True:
+            # save the best state
+            if best_state:
                 self.logger.info('Current best model saved!')
                 best_model = copy.deepcopy(self.model.state_dict())
-                torch.save(best_model, self.best_path)
+                _scaler_mean = float(self.scaler.mean) if hasattr(self.scaler, 'mean') else None
+                _scaler_std = float(self.scaler.std) if hasattr(self.scaler, 'std') else None
+                checkpoint = {'state_dict': best_model}
+                if _scaler_mean is not None:
+                    checkpoint['scaler_mean'] = _scaler_mean
+                if _scaler_std is not None:
+                    checkpoint['scaler_std'] = _scaler_std
+                torch.save(checkpoint, self.best_path)
 
         with open('mae_values.csv', 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
@@ -226,9 +233,13 @@ class Engine(object):
     @staticmethod
     def test(model, args, data_loader, scaler, logger,path=None):
         if path != None:
-            check_point = torch.load(path)
-            state_dict = check_point['state_dict']
-            args = check_point['config']
+            check_point = torch.load(path, map_location=args.device)
+            if isinstance(check_point, dict) and 'state_dict' in check_point:
+                state_dict = check_point['state_dict']
+                if 'config' in check_point:
+                    args = check_point['config']
+            else:
+                state_dict = check_point
             model.load_state_dict(state_dict)
             model.to(args.device)
         model.eval()

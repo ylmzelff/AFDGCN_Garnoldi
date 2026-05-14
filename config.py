@@ -1,5 +1,8 @@
 import argparse
 import configparser
+import os
+
+_BASE = os.path.dirname(os.path.abspath(__file__))
 
 # *****************************************  参数初始化配置 ****************************************** #
 Mode = 'train'
@@ -13,8 +16,8 @@ DATASET = 'Kayseri'
 DEVICE = 'cuda:0'
 #DEVICE = 'cpu'
 MODEL = 'AFDGCN'
-GRAPH = "/content/AFDGCN_Garnoldi/data/Sivas/directed_graph_edges.csv"
-#GRAPH = "/content/AFDGCN_Garnoldi/data/Kayseri/directed_graph_edges.csv"
+#GRAPH = "/content/AFDGCN_Garnoldi/data/Sivas/directed_graph_edges.csv"
+GRAPH = "/content/AFDGCN_Garnoldi/data/Kayseri/directed_graph_edges.csv"
 #GRAPH = "/content/AFDGCN_Garnoldi/data/Kayseri/graph_ildem.csv"
 #GRAPH = "/content/AFDGCN_Garnoldi/data/Konya/konya_kavşaklar.csv"
 #GRAPH = "/content/AFDGCN_Garnoldi/data/Kcetas/conn_graph.csv"
@@ -27,7 +30,7 @@ ALGO = ALGO_OPTIONS[1]
 FILENAME_ID = None
 
 # 1. get configuration
-config_file = '/content/AFDGCN_Garnoldi/conf/{}_{}.conf'.format(DATASET, MODEL)
+config_file = os.path.join(_BASE, 'conf', '{}_{}.conf'.format(DATASET, MODEL))
 print(config_file)
 config = configparser.ConfigParser()
 config.read(config_file)
@@ -74,5 +77,5 @@ args.add_argument('--mape_thresh', default=config['test']['mape_thresh'], type=f
 # 7. log
 args.add_argument('--log_dir', default='./', type=str)
 args.add_argument("--checkpoint", type=str, default="./save_model/", help="pre-trained model file")
-args = args.parse_args()
+args, _unknown = args.parse_known_args()
 # *****************************************  参数初始化配置 ****************************************** #

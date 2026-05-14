@@ -1,0 +1,34 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "allowJs": false,
+    "outDir": "./dist",
+    "rootDir": "./",
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "sourceMap": true,
+    "declaration": true,
+    "incremental": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["source/*"],
+      "@/common/*": ["source/common/*"],
+      "@/database/*": ["source/database/*"],
+      "@/types/*": ["source/types/*"]
+    },
+    "typeRoots": ["node_modules/@types", "source/types"]
+  },
+  "include": ["source/**/*.ts", "server.ts"],
+  "exclude": ["node_modules", "dist"]
+}

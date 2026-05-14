@@ -1,0 +1,112 @@
+// This is your Prisma schema file.
+// Learn more: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model PhasePrediction {
+  id               String   @id @default(uuid())
+  createdAt        DateTime @default(now()) @map("created_at")
+  region           String   @db.VarChar(50)
+  city             String   @default("kayseri") @db.VarChar(50)
+  timeLabel        String   @map("time_label") @db.VarChar(10)
+  minuteIndex      Int      @map("minute_index")
+  predictionSource String   @map("prediction_source") @db.VarChar(30)
+  kayseriApiStatus String   @map("kayseri_api_status") @db.VarChar(20)
+  junctionCount    Int      @map("junction_count")
+  totalVehicles    Int      @default(0) @map("total_vehicles")
+  payload          Json?
+
+  @@index([createdAt])
+  @@index([region])
+  @@map("phase_predictions")
+}
+
+model ModelEvent {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now()) @map("created_at")
+  eventType String   @map("event_type") @db.VarChar(30)
+  modelPath String   @default("") @map("model_path") @db.VarChar(255)
+  numNodes  Int?     @map("num_nodes")
+  lag       Int?
+  details   String   @default("") @db.VarChar(500)
+
+  @@index([createdAt])
+  @@index([eventType])
+  @@map("model_events")
+}
+
+model User {
+  id             String   @id @default(uuid())
+  username       String   @unique @db.VarChar(64)
+  hashedPassword String   @map("hashed_password")
+  disabled       Boolean  @default(false)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@map("users")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Şehir Bazlı API Konfigürasyonu (kayseri, sivas, konya, ...)
+// ─────────────────────────────────────────────────────────────────────────────
+model ApiConfig {
+  id        String   @id @default(uuid())
+  city      String   @unique @db.VarChar(50)
+  baseUrl   String   @map("base_url") @db.VarChar(255)
+  username  String   @db.VarChar(100)
+  password  String   @db.VarChar(255)
+  isActive  Boolean  @default(true) @map("is_active")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("api_configs")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bölge Konfigürasyonu (kavşak id'leri, model kullanımı, ...)
+// ─────────────────────────────────────────────────────────────────────────────
+model RegionConfig {
+  id          String   @id @default(uuid())
+  city        String   @db.VarChar(50)
+  region      String   @db.VarChar(50)
+  bolgeAdi    String   @default("") @map("bolge_adi") @db.VarChar(100)
+  description String   @default("") @db.VarChar(200)
+  junctionIds Json     @map("junction_ids")
+  useModel    Boolean  @default(false) @map("use_model")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@unique([city, region])
+  @@index([city])
+  @@map("region_configs")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Model Versiyon Yönetimi (.pth dosyaları)
+// ─────────────────────────────────────────────────────────────────────────────
+model ModelVersion {
+  id          String   @id @default(uuid())
+  name        String   @db.VarChar(100)
+  description String   @default("") @db.VarChar(500)
+  city        String   @db.VarChar(50)
+  region      String   @db.VarChar(50)
+  filePath    String   @default("") @map("file_path") @db.VarChar(500)
+  weights     Bytes?
+  numNodes    Int      @map("num_nodes")
+  lag         Int      @default(1)
+  horizon     Int      @default(1)
+  scalerMean  Float    @default(0) @map("scaler_mean")
+  scalerStd   Float    @default(1) @map("scaler_std")
+  isActive    Boolean  @default(false) @map("is_active")
+  uploadedAt  DateTime @default(now()) @map("uploaded_at")
+
+  @@unique([city, region, name])
+  @@index([city, region])
+  @@index([isActive])
+  @@map("model_versions")
+}
