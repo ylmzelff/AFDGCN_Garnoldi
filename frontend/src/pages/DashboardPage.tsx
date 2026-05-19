@@ -50,7 +50,7 @@ interface PhaseArm {
 
 function loadLevel(total: number): LoadLevel {
   if (total === 0) return null;
-  if (total < 40)  return 'low';
+  if (total < 40) return 'low';
   if (total < 100) return 'medium';
   return 'high';
 }
@@ -118,7 +118,7 @@ export default function DashboardPage() {
       for (const [jidStr, arms] of Object.entries(timeSeries)) {
         const jid = Number(jidStr);
         let total = 0;
-        let max   = 0;
+        let max = 0;
         for (const series of Object.values(arms as Record<string, number[]>)) {
           // Serinin sonundan ilk sıfır olmayan değeri bul
           const lastVal = [...series].reverse().find((v) => v > 0) ?? 0;
@@ -352,11 +352,10 @@ export default function DashboardPage() {
                   <button
                     key={r.name}
                     onClick={() => handleRegionSelect(r)}
-                    className={`flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm font-medium transition focus:outline-none ${
-                      active
+                    className={`flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm font-medium transition focus:outline-none ${active
                         ? 'border-brand bg-brand text-white shadow-md'
                         : 'border-gray-200 bg-white text-gray-700 hover:border-brand/50 hover:shadow-sm'
-                    }`}
+                      }`}
                   >
                     {r.useModel
                       ? <Brain className={`h-3.5 w-3.5 flex-shrink-0 ${active ? 'text-white/70' : 'text-brand'}`} />
@@ -364,7 +363,7 @@ export default function DashboardPage() {
                     }
                     <span>{r.label}</span>
                     <span className={`text-[11px] font-normal ${active ? 'text-white/60' : 'text-gray-400'}`}>
-                      {r.useModel ? 'AFDGCN' : 'Moving Avg'}
+                      {r.useModel ? 'Garnoldi' : 'Moving Avg'}
                     </span>
                   </button>
                 );
@@ -400,29 +399,28 @@ export default function DashboardPage() {
             <>
               {/* Pill listesi */}
               <div className="mt-2 flex flex-wrap gap-2">
-            {(selectedRegion?.junctions ?? []).map((j) => {
-              const sel  = selectedJunction?.id === j.id;
-              const live = liveData[j.id];
-              return (
-                <button
-                  key={j.id}
-                  onClick={() => handleJunctionSelect(j)}
-                  className={`flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm font-medium transition focus:outline-none ${
-                    sel
-                      ? 'border-brand bg-brand text-white shadow-md'
-                      : 'border-gray-200 bg-white text-gray-700 hover:border-brand/50 hover:shadow-sm'
-                  }`}
-                >
-                  <TrafficCone className={`h-3.5 w-3.5 flex-shrink-0 ${sel ? 'text-white/70' : 'text-brand'}`} />
-                  <span>{j.name}</span>
-                  {!liveLoading && live && (
-                    <span className={`text-[11px] font-normal ${sel ? 'text-white/60' : 'text-gray-400'}`}>
-                      {live.totalVehicles} araç
-                    </span>
-                  )}
-                </button>
-              );
-            })}
+                {(selectedRegion?.junctions ?? []).map((j) => {
+                  const sel = selectedJunction?.id === j.id;
+                  const live = liveData[j.id];
+                  return (
+                    <button
+                      key={j.id}
+                      onClick={() => handleJunctionSelect(j)}
+                      className={`flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm font-medium transition focus:outline-none ${sel
+                          ? 'border-brand bg-brand text-white shadow-md'
+                          : 'border-gray-200 bg-white text-gray-700 hover:border-brand/50 hover:shadow-sm'
+                        }`}
+                    >
+                      <TrafficCone className={`h-3.5 w-3.5 flex-shrink-0 ${sel ? 'text-white/70' : 'text-brand'}`} />
+                      <span>{j.name}</span>
+                      {!liveLoading && live && (
+                        <span className={`text-[11px] font-normal ${sel ? 'text-white/60' : 'text-gray-400'}`}>
+                          {live.totalVehicles} araç
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
 
               {/* Seçili kavşak detay kartı */}
@@ -477,23 +475,20 @@ export default function DashboardPage() {
                     <span className="text-xs bg-brand/10 text-brand font-bold px-2.5 py-0.5 rounded-full">{phaseCycle}s döngü</span>
                     <span className="text-xs bg-gray-200 text-gray-600 font-medium px-2 py-0.5 rounded-full">Webster Oranınlı Mod</span>
                     {source && (
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
-                        source === 'AFDGCN' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
-                      }`}>{source}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${source === 'AFDGCN' ? 'bg-indigo-100 text-indigo-700' : 'bg-purple-100 text-purple-700'
+                        }`}>{source === 'AFDGCN' ? 'Garnoldi' : source}</span>
                     )}
                   </div>
                   <div className="flex rounded-lg overflow-hidden border border-gray-200 text-xs">
                     <button
                       onClick={() => setPhaseView('duration')}
-                      className={`px-3 py-1.5 font-medium transition ${
-                        phaseView === 'duration' ? 'bg-brand text-white' : 'text-gray-500 hover:bg-gray-100'
-                      }`}
+                      className={`px-3 py-1.5 font-medium transition ${phaseView === 'duration' ? 'bg-brand text-white' : 'text-gray-500 hover:bg-gray-100'
+                        }`}
                     >Faz Süre Dağılımı</button>
                     <button
                       onClick={() => setPhaseView('vehicles')}
-                      className={`px-3 py-1.5 font-medium border-l border-gray-200 transition ${
-                        phaseView === 'vehicles' ? 'bg-brand text-white' : 'text-gray-500 hover:bg-gray-100'
-                      }`}
+                      className={`px-3 py-1.5 font-medium border-l border-gray-200 transition ${phaseView === 'vehicles' ? 'bg-brand text-white' : 'text-gray-500 hover:bg-gray-100'
+                        }`}
                     >Araç Sayısı Dağılımı</button>
                   </div>
                 </div>
@@ -523,9 +518,8 @@ export default function DashboardPage() {
                             title={`Kol ${arm.arm} Sarı: ${arm.yellow}s`}
                           />
                           <div
-                            style={{ flex: 6, background: '#4b5563' }}
+                            style={{ flex: 6, background: '#334155' }}
                             title="Koruma: 6s"
-                            className="opacity-70"
                           />
                         </Fragment>
                       ))}
@@ -537,8 +531,8 @@ export default function DashboardPage() {
                       {phaseData.map((arm, i) => {
                         const color = ARM_PHASE_COLORS[i % ARM_PHASE_COLORS.length];
                         const maxGreen = Math.max(...phaseData.map((a) => a.green), 1);
-                        const maxVeh   = Math.max(...phaseData.map((a) => a.vehicle_count), 1);
-                        const barPct   = phaseView === 'duration'
+                        const maxVeh = Math.max(...phaseData.map((a) => a.vehicle_count), 1);
+                        const barPct = phaseView === 'duration'
                           ? (arm.green / maxGreen) * 100
                           : (arm.vehicle_count / maxVeh) * 100;
                         const label = phaseView === 'duration'
@@ -549,11 +543,10 @@ export default function DashboardPage() {
                           <button
                             key={arm.arm}
                             onClick={() => setSelectedArm(isActive ? null : arm.arm)}
-                            className={`w-full flex items-center gap-3 rounded-xl px-3 py-2 transition text-left border-2 ${
-                              isActive
+                            className={`w-full flex items-center gap-3 rounded-xl px-3 py-2 transition text-left border-2 ${isActive
                                 ? 'border-opacity-100 shadow-sm'
                                 : 'border-transparent hover:bg-gray-50'
-                            }`}
+                              }`}
                             style={isActive ? { borderColor: color, background: color + '12' } : {}}
                           >
                             <div className="w-12 text-sm font-bold flex-shrink-0" style={{ color }}>Faz {arm.arm}</div>
@@ -579,7 +572,6 @@ export default function DashboardPage() {
                             <th className="text-right font-semibold pb-1.5">Yeşil</th>
                             <th className="text-right font-semibold pb-1.5">Sarı</th>
                             <th className="text-right font-semibold pb-1.5">Kırmızı</th>
-                            <th className="text-right font-semibold pb-1.5">Araç</th>
                             <th className="text-right font-semibold pb-1.5">Durum</th>
                           </tr>
                         </thead>
@@ -588,21 +580,18 @@ export default function DashboardPage() {
                             <tr
                               key={arm.arm}
                               onClick={() => setSelectedArm(selectedArm === arm.arm ? null : arm.arm)}
-                              className={`cursor-pointer transition ${
-                                selectedArm === arm.arm ? 'bg-blue-50' : 'hover:bg-gray-50'
-                              }`}
+                              className={`cursor-pointer transition ${selectedArm === arm.arm ? 'bg-blue-50' : 'hover:bg-gray-50'
+                                }`}
                             >
                               <td className="py-1 font-bold" style={{ color: ARM_PHASE_COLORS[i % ARM_PHASE_COLORS.length] }}>Faz {arm.arm}</td>
                               <td className="text-right text-green-600 font-mono">{arm.green}s</td>
                               <td className="text-right text-yellow-600 font-mono">{arm.yellow}s</td>
                               <td className="text-right text-red-500 font-mono">{arm.red}s</td>
-                              <td className="text-right text-gray-700 font-mono">{Math.round(arm.vehicle_count)}</td>
                               <td className="text-right">
-                                <span className={`px-1.5 py-0.5 rounded-full font-semibold ${
-                                  arm.status === 'low'    ? 'bg-green-100 text-green-700' :
-                                  arm.status === 'medium' ? 'bg-yellow-100 text-yellow-700' :
-                                                            'bg-red-100 text-red-700'
-                                }`}>
+                                <span className={`px-1.5 py-0.5 rounded-full font-semibold ${arm.status === 'low' ? 'bg-green-100 text-green-700' :
+                                    arm.status === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                                      'bg-red-100 text-red-700'
+                                  }`}>
                                   {arm.status === 'low' ? 'Düşük' : arm.status === 'medium' ? 'Orta' : 'Yoğun'}
                                 </span>
                               </td>
@@ -616,7 +605,7 @@ export default function DashboardPage() {
                     <div className="flex gap-4 mt-3">
                       <span className="flex items-center gap-1.5 text-xs text-gray-400"><span className="h-2 w-5 rounded-sm bg-green-500" />Yeşil</span>
                       <span className="flex items-center gap-1.5 text-xs text-gray-400"><span className="h-2 w-5 rounded-sm bg-yellow-400" />Sarı</span>
-                      <span className="flex items-center gap-1.5 text-xs text-gray-400"><span className="h-2 w-5 rounded-sm bg-gray-600 opacity-70" />Koruma</span>
+                      <span className="flex items-center gap-1.5 text-xs text-gray-400"><span className="h-2 w-5 rounded-sm" style={{ background: '#334155' }} />Koruma</span>
                     </div>
                   </div>
 
@@ -698,7 +687,7 @@ export default function DashboardPage() {
                   {selectedJunction.name} — Faz {selectedArm} — Araç Akışı
                 </h2>
                 <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
-                  {source && <><Activity className="h-3 w-3" />{source} · </>}
+                  {source && <><Activity className="h-3 w-3" />{source === 'AFDGCN' ? 'Garnoldi' : source} · </>}
                   10dk yenileme
                 </p>
               </div>
@@ -722,18 +711,19 @@ export default function DashboardPage() {
                     <XAxis dataKey="time" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
                     <YAxis tick={{ fontSize: 11 }} unit=" araç" width={60} />
                     <Tooltip
-                      contentStyle={{ borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 12 }}
-                      formatter={(v: number) => [`${v} araç`]}
+                      contentStyle={{ borderRadius: 10, border: '1px solid #e0e7ff', fontSize: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
+                      formatter={(v: number, name: string) => [`${v} araç`, name]}
+                      labelStyle={{ fontWeight: 600, color: '#374151' }}
                     />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
                     <Line
                       type="monotone" dataKey="real" name="Gerçek"
-                      stroke="#3b82f6" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} connectNulls
+                      stroke="#2563eb" strokeWidth={2.5} dot={false} activeDot={{ r: 5, fill: '#2563eb' }} connectNulls
                     />
                     <Line
-                      type="monotone" dataKey="predicted" name="Tahmin"
-                      stroke="#f97316" strokeWidth={2} strokeDasharray="5 3"
-                      dot={false} activeDot={{ r: 4 }} connectNulls
+                      type="monotone" dataKey="predicted" name="Garnoldi Tahmini"
+                      stroke="#f59e0b" strokeWidth={2.5} strokeDasharray="6 3"
+                      dot={false} activeDot={{ r: 5, fill: '#f59e0b' }} connectNulls
                     />
                   </LineChart>
                 </ResponsiveContainer>

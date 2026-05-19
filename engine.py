@@ -53,9 +53,10 @@ class Engine(object):
             # data and target shape: B, T, N, F; output shape: B, T, N, F
             self.optimizer.zero_grad()
             output = self.model(data)#afdgcn forward 
-            if self.args.real_value:
-                label = self.scaler.inverse_transform(label)
             output = output.to(label.device)
+            if self.args.real_value:
+                output = self.scaler.inverse_transform(output)
+                label = self.scaler.inverse_transform(label)
 
             loss = self.loss(output, label)
             mae = torch.abs(output - label).mean()
@@ -98,14 +99,11 @@ class Engine(object):
                 data = data[..., :1]
                 label = target[..., :1].to(data.device) 
                 output = self.model(data)
-                #print("label:")
-                #print(label.shape)
-                #print("output: ")
-                #print(output.shape)
                 y_true.append(label)
                 y_pred.append(output)
                 output = output.to(label.device)
                 if self.args.real_value:
+                    output = self.scaler.inverse_transform(output)
                     label = self.scaler.inverse_transform(label)
                 loss = self.loss(output, label)
                 mae = torch.abs(output - label).mean()

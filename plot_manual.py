@@ -4,38 +4,34 @@ import matplotlib.dates as mdates
 from matplotlib.ticker import FuncFormatter
 
 # Load Real Data
-real_data_path = r"./real_flow_gar.csv"
+real_data_path = r"./real_gar_garnoldi (1).csv"
 df_real = pd.read_csv(real_data_path)
 
 # Load Prediction Data
-pred_data_path = r"./test_gar.csv"
-#pred_data_path = r"./test_result_pems_def.csv"
-df_pred = pd.read_csv(pred_data_path, skiprows=1, header=None, names=['timestep', 'location', 'flow', 'occupy', 'speed'])
+pred_data_path = r"./test_gar_garnoldi.csv"
+df_pred = pd.read_csv(pred_data_path)
 
 # Define Parameters
-start_date = pd.Timestamp("2026-01-17 09:50")  # 8641st timestep (1 month prediction)
-#26.11.2025	05:00
-#17.01.2026	09:50 ocak
-#23.02.2025	05:00 şubat
-
-
+# İldem Nisan 2026 verisi: 30 gün × 144 timestep = 4320 → test %20 = 864 timestep
+# Test başlangıcı: 01.04.2026 00:00 + 3456 × 10 dk = 25.04.2026 00:00
+start_date = pd.Timestamp("2026-04-25 00:10")  # test seti başlangıcı (Nisan 2026)
 
 # Time interval details
-time_interval = 60  # Time interval in minutes (hourly data)
+time_interval = 10  # Time interval in minutes (10 dakika)
 daily_time_steps = int((24 * 60) / time_interval)  # Number of timesteps per day
-test_time_steps = 949  # Number of test timesteps (1 month)
+test_time_steps = 864  # Number of test timesteps (%20 × 4320)
 
 # Extract relevant test data
-df_pred_location = df_pred[df_pred['location'] == 0].iloc[-test_time_steps:]
-df_real_period = df_real[df_real['location'] == 0].iloc[-test_time_steps:]
+df_pred_location = df_pred[df_pred['location'] == 18].iloc[-test_time_steps:]
+df_real_period = df_real[df_real['location'] == 18].iloc[-test_time_steps:]
 
 # Generate Time Steps
 time_steps_pred = [start_date + pd.Timedelta(minutes=time_interval * i) for i in range(len(df_pred_location))]
 time_steps_real = [start_date + pd.Timedelta(minutes=time_interval * i) for i in range(len(df_real_period))]
 
 # Define zoom range based on date and hour
-zoom_start_date = pd.Timestamp("2026-01-19 10:00")  # LAST day morning
-zoom_end_date = pd.Timestamp("2026-01-19 22:00")    # LAST day evening
+zoom_start_date = pd.Timestamp("2026-04-28 09:00")  # zoom başlangıcı (Nisan 28)
+zoom_end_date = pd.Timestamp("2026-04-28 23:00")    # zoom bitişi
 
 zoom_start = next((i for i, t in enumerate(time_steps_real) if t >= zoom_start_date), 0)
 zoom_end = next((i for i, t in enumerate(time_steps_real) if t >= zoom_end_date), len(time_steps_real) - 1)

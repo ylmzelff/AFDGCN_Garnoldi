@@ -46,7 +46,7 @@ def convert_to_intersection_format(input_csv, output_excel):
     }
     
     # Başlangıç tarihi ve saati
-    start_datetime = datetime.strptime("23.02.2025 05:00", "%d.%m.%Y %H:%M")
+    start_datetime = datetime.strptime("25.04.2026 00:10", "%d.%m.%Y %H:%M")
     
     # Her kavşak için ayrı sheet oluştur
     with pd.ExcelWriter(output_excel, engine='openpyxl') as writer:
@@ -106,7 +106,7 @@ def convert_to_intersection_format(input_csv, output_excel):
 
 def main():
     # Kullanım
-    input_file = "test_gar.csv"
+    input_file = "test_gar_garnoldi.csv"
     output_file = "ildem_kış.xlsx"
     
     try:

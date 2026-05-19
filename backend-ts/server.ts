@@ -86,9 +86,9 @@ async function startup(): Promise<void> {
 
     // ── Bölge konfigürasyonu seed ──────────────────────────────────────────
     const defaultRegions = [
-      { city: 'kayseri', region: 'ildem',      bolgeAdi: '\u0130LDEM',     junctionIds: [89, 187, 95, 121, 184, 188, 117, 192, 194], useModel: true,  description: 'İldem (AFDGCN)' },
-      { city: 'kayseri', region: 'tuna',        bolgeAdi: 'TUNA',          junctionIds: [5, 3, 87, 25, 26, 27, 7],                   useModel: false, description: 'Tuna (Moving Average)' },
-      { city: 'kayseri', region: 'kizilirmak',  bolgeAdi: 'KIZILIRMAK',   junctionIds: [130, 38, 176],                               useModel: false, description: 'Kızılırmak (Moving Average)' },
+      { city: 'kayseri', region: 'ildem', bolgeAdi: '\u0130LDEM', junctionIds: [89, 187, 95, 121, 184, 188, 117, 192, 194], useModel: true, description: 'İldem (AFDGCN)' },
+      { city: 'kayseri', region: 'tuna', bolgeAdi: 'TUNA', junctionIds: [5, 3, 87, 25, 26, 27, 7], useModel: false, description: 'Tuna (Moving Average)' },
+      { city: 'kayseri', region: 'kizilirmak', bolgeAdi: 'KIZILIRMAK', junctionIds: [130, 38, 176], useModel: false, description: 'Kızılırmak (Moving Average)' },
     ]
     for (const r of defaultRegions) {
       await prisma.regionConfig.upsert({
@@ -171,6 +171,15 @@ async function startup(): Promise<void> {
     void logModelEvent('startup', '', 'TypeScript backend başlatıldı')
   } catch (err) {
     console.warn('⚠️  Veritabanına bağlanılamadı, DB logging devre dışı:', err)
+    
+    // DB kapalıysa bile sistemin çalışabilmesi için varsayılan bölgeleri memory'e yükle
+    const defaultRegions = [
+      { city: 'kayseri', region: 'ildem', bolgeAdi: '\u0130LDEM', junctionIds: [89, 187, 95, 121, 184, 188, 117, 192, 194], useModel: true, description: 'İldem (AFDGCN)' },
+      { city: 'kayseri', region: 'tuna', bolgeAdi: 'TUNA', junctionIds: [5, 3, 87, 25, 26, 27, 7], useModel: false, description: 'Tuna (Moving Average)' },
+      { city: 'kayseri', region: 'kizilirmak', bolgeAdi: 'KIZILIRMAK', junctionIds: [130, 38, 176], useModel: false, description: 'Kızılırmak (Moving Average)' },
+    ]
+    loadRegionConfigs(defaultRegions)
+    console.info('✅ Varsayılan bölge konfigürasyonları yüklendi (Fallback)')
   }
 
   // 4. Arka plan çekici başlat

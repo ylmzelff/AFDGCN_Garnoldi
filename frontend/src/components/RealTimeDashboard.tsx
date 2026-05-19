@@ -132,7 +132,7 @@ export const RealTimeDashboard: React.FC<DashboardProps> = ({ initialRegion = 'i
           <div className="bg-white p-4 rounded-lg shadow">
             <p className="text-sm text-slate-600">Veri Kaynağı</p>
             <p className="text-lg font-semibold text-slate-900">
-              {regionData.source === 'AFDGCN' ? '🤖 AFDGCN' : '📊 Ortalama'}
+              {regionData.source === 'AFDGCN' ? '🤖 Garnoldi' : '📊 Ortalama'}
             </p>
           </div>
           <div className="bg-white p-4 rounded-lg shadow">

@@ -11,7 +11,7 @@ export default {
         },
         brand: {
           DEFAULT: '#1e3a5f',
-          light: '#2563eb',
+          light: '#4f46e5',
         },
       },
       animation: {

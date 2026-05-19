@@ -145,6 +145,10 @@ _model_ready: bool = False
 _model_lag: int = LAG
 _model_lock = asyncio.Lock()
 
+# True ise model zaten raw (denormalize) değer çıkarıyor, _denormalize() uygulanmaz.
+# real_value=True ile eğitilen modeller raw çıktı üretir.
+_model_outputs_raw: bool = True
+
 _MAX_HISTORY = 12
 _history: List[np.ndarray] = []
 
@@ -233,11 +237,15 @@ def _try_load(path: Path):
 
     net.load_state_dict(state_dict, strict=False)
     net.eval()
+    global SCALER_MEAN, SCALER_STD, _model_outputs_raw
     if _ckpt_scaler_mean is not None and _ckpt_scaler_std is not None:
-        global SCALER_MEAN, SCALER_STD
         SCALER_MEAN = float(_ckpt_scaler_mean)
         SCALER_STD = float(_ckpt_scaler_std)
         logger.info("Scaler .pth'dan yüklendi: mean=%.4f std=%.4f", SCALER_MEAN, SCALER_STD)
+    # real_value_output bayrağı: checkpoint'te yoksa True (mevcut tüm modeller real_value=True ile eğitildi)
+    raw_flag = state_dict if isinstance(state_dict, dict) else {}
+    _model_outputs_raw = bool(raw_flag.pop('real_value_output', True))
+    logger.info("Model çıktı modu: %s", 'RAW (denorm yok)' if _model_outputs_raw else 'NORM (denorm uygulanır)')
     logger.info("✅ Model yüklendi: %s (%d node, lag=%d)", path.name, NUM_NODES, lag)
     return net, lag
 
@@ -324,11 +332,14 @@ def _try_load_from_bytes(data: bytes):
 
     net.load_state_dict(state_dict, strict=False)
     net.eval()
+    global SCALER_MEAN, SCALER_STD, _model_outputs_raw
     if _ckpt_scaler_mean is not None and _ckpt_scaler_std is not None:
-        global SCALER_MEAN, SCALER_STD
         SCALER_MEAN = float(_ckpt_scaler_mean)
         SCALER_STD = float(_ckpt_scaler_std)
         logger.info("Scaler bytes'dan yüklendi: mean=%.4f std=%.4f", SCALER_MEAN, SCALER_STD)
+    raw_flag = state_dict if isinstance(state_dict, dict) else {}
+    _model_outputs_raw = bool(raw_flag.pop('real_value_output', True))
+    logger.info("Model çıktı modu: %s", 'RAW (denorm yok)' if _model_outputs_raw else 'NORM (denorm uygulanır)')
     logger.info("Model bytes'dan yuklendi (%d node, lag=%d)", NUM_NODES, lag)
     return net, lag
 
@@ -548,14 +559,14 @@ async def predict_next_timestep(
     if _model is not None:
         async with _INFERENCE_LOCK:
             loop = asyncio.get_event_loop()
-            pred_norm = await loop.run_in_executor(
+            model_out = await loop.run_in_executor(
                 None, _run_forward, _model, history_norm
             )
+        # real_value=True ile eğitilen model zaten raw değer çıkarır
+        pred = np.clip(model_out, 0, None) if _model_outputs_raw else np.clip(_denormalize(model_out), 0, None)
     else:
         pred_norm = _moving_average_predict(history_norm)
-
-    pred = _denormalize(pred_norm)
-    pred = np.clip(pred, 0, None)
+        pred = np.clip(_denormalize(pred_norm), 0, None)
 
     result: Dict[int, Dict[str, float]] = {}
     for jid, arm_map in ILDEM_NODE_MAP.items():
@@ -603,12 +614,12 @@ def _predict_rolling_series_sync(
         window_norm = _normalize(window)
 
         if _model is not None:
-            pred_norm = _run_forward(_model, window_norm)
+            model_out = _run_forward(_model, window_norm)
+            pred = np.clip(model_out, 0, None) if _model_outputs_raw else np.clip(_denormalize(model_out), 0, None)
         else:
             pred_norm = _moving_average_predict(window_norm)
+            pred = np.clip(_denormalize(pred_norm), 0, None)
 
-        pred = _denormalize(pred_norm)
-        pred = np.clip(pred, 0, None)
         result_series[i] = pred[0]  # (NUM_NODES,)
 
     # Node vektörünü kavşak/kol sözlüğüne çevir

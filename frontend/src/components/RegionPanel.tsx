@@ -13,7 +13,7 @@ import {
 } from 'recharts';
 
 const SOURCE_COLORS: Record<string, string> = {
-  AFDGCN:         '#3b82f6',
+  AFDGCN:         '#6366f1',
   moving_average: '#8b5cf6',
 };
 
@@ -48,9 +48,9 @@ export function RegionPanel({ data, isLoading, isError, onRefresh }: Props) {
         />
         <SummaryCard
           label="Tahmin Kaynağı"
-          value={data.prediction_source === 'AFDGCN' ? 'AFDGCN' : 'Avg'}
+          value={data.prediction_source === 'AFDGCN' ? 'Garnoldi' : 'Avg'}
           icon={<Brain className="h-4 w-4" style={{ color: SOURCE_COLORS[data.prediction_source] }} />}
-          highlight={data.prediction_source === 'AFDGCN' ? 'blue' : 'purple'}
+          highlight={data.prediction_source === 'AFDGCN' ? 'indigo' : 'purple'}
         />
         <SummaryCard
           label="Belediye API"
@@ -140,14 +140,15 @@ function SummaryCard({
   label: string;
   value: string | number;
   icon?: React.ReactNode;
-  highlight?: 'blue' | 'green' | 'yellow' | 'purple';
+  highlight?: 'blue' | 'green' | 'yellow' | 'purple' | 'indigo';
 }) {
   const ringColor = {
     blue:   'ring-blue-200',
     green:  'ring-green-200',
     yellow: 'ring-yellow-200',
     purple: 'ring-purple-200',
-  }[highlight ?? 'blue'] ?? '';
+    indigo: 'ring-indigo-200',
+  }[highlight ?? 'indigo'] ?? '';
 
   return (
     <div className={`rounded-xl border bg-white p-3 shadow-sm ring-1 ${ringColor}`}>
