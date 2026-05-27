@@ -1,0 +1,24 @@
+# ---------------------------------------------------------------
+# Python Model Server (model_server.py) için minimal bağımlılıklar
+# Sadece inference — training bağımlılıkları dahil değil
+# ---------------------------------------------------------------
+
+# Web servis
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.7
+python-dotenv>=1.0
+
+# PyTorch CPU (GPU gerekmez)
+--index-url https://download.pytorch.org/whl/cpu
+torch>=2.1.0
+
+# PyTorch Geometric (model mimarisi için gerekli)
+torch_geometric
+--find-links https://data.pyg.org/whl/torch-2.1.0+cpu.html
+torch_sparse
+
+# Veri işleme
+numpy>=1.24
+pandas>=2.0
+scipy>=1.10

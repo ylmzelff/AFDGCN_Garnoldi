@@ -1,5 +1,5 @@
 # =============================================================================
-# AFDGCN — Phase API Production Docker Image
+# AFDGCN — Python Model Server (port 9002)
 # =============================================================================
 
 FROM python:3.11-slim
@@ -14,18 +14,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Önce sadece requirements — layer cache avantajı
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements_model.txt .
+RUN pip install --no-cache-dir -r requirements_model.txt
 
 # Uygulama kodu
-COPY . .
+COPY model_server.py config.py ./
+COPY model/ ./model/
+COPY ml/ ./ml/
+COPY data/Kayseri/ ./data/Kayseri/
+COPY saved_models/ ./saved_models/
 
 # Port
-EXPOSE 9001
+EXPOSE 9002
 
 # Sağlık kontrolü
-HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
-    CMD curl -f http://localhost:9001/health || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:9002/health || exit 1
 
-# Phase API başlat (tek worker — AFDGCN thread-safe değil)
-CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "9001", "--workers", "1"]
+# Model sunucusunu başlat (tek worker — AFDGCN thread-safe değil)
+CMD ["uvicorn", "model_server:app", "--host", "0.0.0.0", "--port", "9002", "--workers", "1"]

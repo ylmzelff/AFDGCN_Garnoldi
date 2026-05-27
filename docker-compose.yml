@@ -51,37 +51,40 @@ services:
   # ─────────────────────────────────────────────────────────────────────────
   phase_api:
     build:
-      context: .
+      context: ./backend-ts
       dockerfile: Dockerfile
     container_name: afdgcn_phase_api
-    command: uvicorn backend.app.main:app --host 0.0.0.0 --port 9001 --workers 1
     environment:
+      NODE_ENV: production
+      PORT: 9001
       # Veritabanı
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres123@postgres:5432/afdgcn
+      DATABASE_URL: postgresql://postgres:postgres123@postgres:5432/afdgcn
 
-      # Belediye kayseri_api adresi — gerçek URL gelince burası güncellenir
-      # Runtime güncellemesi için: POST /admin/update-kayseri-url?url=http://...
+      # Kayseri Belediye API
       KAYSERI_API_URL: ${KAYSERI_API_URL:-http://host.docker.internal:9000}
       KAYSERI_USERNAME: ${KAYSERI_USERNAME:-demo}
       KAYSERI_PASSWORD: ${KAYSERI_PASSWORD:-demo123}
 
+      # AusTKM Gerçek API
+      AUSTM_API_URL: ${AUSTM_API_URL:-https://ausapi.kayseri.bel.tr:18880}
+      AUSTM_API_TOKEN: ${AUSTM_API_TOKEN:-}
+
+      # Python Model Sunucusu
+      PYTHON_MODEL_URL: http://model_server:9002
+
       # JWT
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-kayseri-traffic-api-secret-key-2026-change-in-production}
+      JWT_SECRET: ${JWT_SECRET:-kayseri-traffic-api-secret-key-2026-change-in-production}
 
-      # WebSocket broadcast aralığı (saniye)
-      WS_BROADCAST_INTERVAL: ${WS_BROADCAST_INTERVAL:-600}
+      # Aralıklar (ms)
+      WS_BROADCAST_INTERVAL_MS: ${WS_BROADCAST_INTERVAL_MS:-600000}
+      BG_FETCH_INTERVAL_MS: ${BG_FETCH_INTERVAL_MS:-600000}
 
-      # Log seviyesi
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - "9001:9001"
     depends_on:
       postgres:
         condition: service_healthy
-    volumes:
-      - ./saved_models:/app/saved_models:ro
-      - ./data:/app/data:ro
-      - ./model:/app/model:ro
     networks:
       - afdgcn_network
     restart: unless-stopped
@@ -90,7 +93,30 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 15s
+      start_period: 30s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Python Model Sunucusu — port 9002
+  # AFDGCN tahmin motoru (PyTorch + torch_geometric)
+  # ─────────────────────────────────────────────────────────────────────────
+  model_server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: afdgcn_model_server
+    ports:
+      - "9002:9002"
+    volumes:
+      - ./saved_models:/app/saved_models
+    networks:
+      - afdgcn_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9002/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   # ─────────────────────────────────────────────────────────────────────────
   # Nginx — reverse proxy + React frontend static dosyaları
