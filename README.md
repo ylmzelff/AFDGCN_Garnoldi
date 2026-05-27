@@ -42,6 +42,11 @@ npm install        # ilk kurulumda
 npm run dev        # nodemon ile otomatik yeniden başlatma
 ```
 
+buradaki id değişebilir 
+Get-NetTCPConnection -LocalPort 9001 | Select-Object LocalAddress,LocalPort,State,OwningProcess
+Get-Process -Id 39424 
+Stop-Process -Id 39424 -Force
+
 Backend hazır olduğunda terminalde şu çıktıyı görürsünüz:
 
 ```
