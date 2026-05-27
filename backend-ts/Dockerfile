@@ -15,7 +15,8 @@ COPY . .
 
 RUN npm run build
 
-EXPOSE 9001
+# HuggingFace Spaces port 7860 kullanır, diğer ortamlar PORT env var'ı kullanır
+EXPOSE 7860
 
 # Migration'ları çalıştır, sonra sunucuyu başlat
 CMD ["sh", "-c", "npx prisma migrate deploy && node dist/server.js"]
