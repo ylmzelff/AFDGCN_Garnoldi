@@ -1,7 +1,33 @@
 services:
+  # ──────────────────────────────────────────────────────────
+  # Frontend — React + Vite  (ücretsiz, static site)
+  # URL: https://afdgcn-frontend.onrender.com
+  # ──────────────────────────────────────────────────────────
+  - type: web
+    name: afdgcn-frontend
+    env: static
+    plan: free
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        value: https://afdgcn-backend.onrender.com
+      - key: VITE_WS_URL
+        value: wss://afdgcn-backend.onrender.com
+
+  # ──────────────────────────────────────────────────────────
+  # Backend — Node.js / TypeScript  (ücretsiz web service)
+  # URL: https://afdgcn-backend.onrender.com
+  # ──────────────────────────────────────────────────────────
   - type: web
     name: afdgcn-backend
     runtime: node
+    plan: free
     rootDir: backend-ts
     buildCommand: npm install && npx prisma generate && npm run build
     startCommand: npx prisma migrate deploy && node dist/server.js
@@ -11,15 +37,15 @@ services:
       - key: PORT
         value: 9001
       - key: DATABASE_URL
-        sync: false
+        sync: false          # Neon.tech'ten aldığın URL'i buraya gir
       - key: JWT_SECRET
-        sync: false
+        generateValue: true  # Render otomatik oluşturur
       - key: AUSTM_API_URL
         value: https://ausapi.kayseri.bel.tr:18880
       - key: AUSTM_API_TOKEN
-        sync: false
+        sync: false          # Kayseri API token'ın varsa gir (opsiyonel)
       - key: PYTHON_MODEL_URL
-        sync: false
+        sync: false          # HuggingFace Space URL'i varsa gir (opsiyonel)
       - key: WS_BROADCAST_INTERVAL_MS
         value: 600000
       - key: BG_FETCH_INTERVAL_MS

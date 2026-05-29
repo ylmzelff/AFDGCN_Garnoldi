@@ -1,0 +1,46 @@
+# =========================================================
+# AFDGCN Python Model Server — HuggingFace Spaces
+# Port: 7860 (HuggingFace standardı)
+# CPU-only PyTorch, ~2GB image
+# =========================================================
+
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ curl && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# 1) PyTorch CPU — GPU gerekmez, image boyutunu küçük tutar
+RUN pip install --no-cache-dir torch==2.1.0+cpu \
+    --index-url https://download.pytorch.org/whl/cpu
+
+# 2) torch_sparse / torch_scatter — torch 2.1.0+cpu için uyumlu wheel
+RUN pip install --no-cache-dir torch_sparse torch_scatter \
+    -f https://data.pyg.org/whl/torch-2.1.0+cpu.html
+
+# 3) torch_geometric + diğer bağımlılıklar (PyPI)
+RUN pip install --no-cache-dir \
+    torch_geometric \
+    numpy pandas scipy \
+    "fastapi>=0.111.0" "uvicorn[standard]>=0.29.0" \
+    "pydantic>=2.7" python-dotenv
+
+# Uygulama kodu
+COPY model_server.py config.py ./
+COPY model/ ./model/
+COPY ml/ ./ml/
+COPY conf/ ./conf/
+COPY data/Kayseri/ ./data/Kayseri/
+COPY saved_models/ ./saved_models/
+
+# config.py, DATASET=Kayseri + MODEL=AFDGCN → Kayseri_AFDGCN.conf arar;
+# depoda Kayseri_Serit_AFDGCN.conf var, dosyayı beklenen isimle kopyala.
+RUN cp ./conf/Kayseri_Serit_AFDGCN.conf ./conf/Kayseri_AFDGCN.conf
+
+EXPOSE 7860
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
+    CMD curl -f http://localhost:7860/health || exit 1
+
+CMD ["uvicorn", "model_server:app", "--host", "0.0.0.0", "--port", "7860", "--workers", "1"]

@@ -21,8 +21,12 @@ RUN pip install --no-cache-dir -r requirements_model.txt
 COPY model_server.py config.py ./
 COPY model/ ./model/
 COPY ml/ ./ml/
+COPY conf/ ./conf/
 COPY data/Kayseri/ ./data/Kayseri/
 COPY saved_models/ ./saved_models/
+
+# config.py Kayseri_AFDGCN.conf arar; depoda Kayseri_Serit_AFDGCN.conf var.
+RUN cp ./conf/Kayseri_Serit_AFDGCN.conf ./conf/Kayseri_AFDGCN.conf
 
 # Port
 EXPOSE 9002
