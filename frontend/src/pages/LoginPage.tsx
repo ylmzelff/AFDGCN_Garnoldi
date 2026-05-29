@@ -111,10 +111,6 @@ export default function LoginPage() {
             {loading ? 'Giriş yapılıyor…' : 'Giriş Yap'}
           </button>
 
-          <p className="text-center text-xs text-gray-400">
-            Demo: <span className="font-semibold text-gray-600">demo / demo123</span>
-          </p>
-
           <p className="text-center text-sm text-gray-500">
             Hesabın yok mu?{' '}
             <Link to="/register" className="font-semibold text-brand hover:underline">

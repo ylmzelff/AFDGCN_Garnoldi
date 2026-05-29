@@ -458,11 +458,6 @@ export default function DashboardPage() {
                 <Zap className="h-5 w-5" />
                 {phaseLoading ? 'Hesaplanıyor…' : `${selectedJunction.name} için Faz Önerisi Al`}
               </button>
-              {phaseData && (
-                <span className="text-xs text-gray-400 flex items-center gap-1">
-                  Döngü süresi: <strong className="text-gray-700">{phaseCycle}s</strong>
-                </span>
-              )}
             </div>
 
             {phaseData && (
@@ -536,7 +531,7 @@ export default function DashboardPage() {
                           ? (arm.green / maxGreen) * 100
                           : (arm.vehicle_count / maxVeh) * 100;
                         const label = phaseView === 'duration'
-                          ? `${arm.green}s · %${Math.round((arm.green / phaseCycle) * 100)}`
+                          ? `${arm.green}s`
                           : `${Math.round(arm.vehicle_count)} araç`;
                         const isActive = selectedArm === arm.arm;
                         return (
@@ -572,7 +567,6 @@ export default function DashboardPage() {
                             <th className="text-right font-semibold pb-1.5">Yeşil</th>
                             <th className="text-right font-semibold pb-1.5">Sarı</th>
                             <th className="text-right font-semibold pb-1.5">Kırmızı</th>
-                            <th className="text-right font-semibold pb-1.5">Durum</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-50">
@@ -587,14 +581,6 @@ export default function DashboardPage() {
                               <td className="text-right text-green-600 font-mono">{arm.green}s</td>
                               <td className="text-right text-yellow-600 font-mono">{arm.yellow}s</td>
                               <td className="text-right text-red-500 font-mono">{arm.red}s</td>
-                              <td className="text-right">
-                                <span className={`px-1.5 py-0.5 rounded-full font-semibold ${arm.status === 'low' ? 'bg-green-100 text-green-700' :
-                                    arm.status === 'medium' ? 'bg-yellow-100 text-yellow-700' :
-                                      'bg-red-100 text-red-700'
-                                  }`}>
-                                  {arm.status === 'low' ? 'Düşük' : arm.status === 'medium' ? 'Orta' : 'Yoğun'}
-                                </span>
-                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -630,10 +616,8 @@ export default function DashboardPage() {
                           outerRadius={90}
                           paddingAngle={2}
                           dataKey="value"
-                          label={({ name, value, percent }: any) =>
-                            (percent as number) > 0.06
-                              ? `${name} ${value}${phaseView === 'duration' ? 's' : ''} %${Math.round((percent as number) * 100)}`
-                              : ''
+                          label={({ name, value }: any) =>
+                            `${name} ${value}${phaseView === 'duration' ? 's' : ''}`
                           }
                           labelLine
                         >
@@ -663,7 +647,6 @@ export default function DashboardPage() {
                             <span className="font-bold text-gray-800 tabular-nums">
                               {phaseView === 'duration' ? `${arm.green}s` : Math.round(arm.vehicle_count)}
                             </span>
-                            <span className="text-gray-400 w-8 text-right">%{pct}</span>
                           </div>
                         );
                       })}
