@@ -69,13 +69,22 @@ def _peak_factor(hour: int) -> float:
     return 1.0
 
 
-def _make_saatlik_veriler(junction_id: int, arm: str) -> dict:
-    """144 slot (00:00–23:50) için araç sayısı üret — deterministik."""
+def _date_seed(tarih: str) -> int:
+    """YYYY-MM-DD → sayısal seed (farklı günler farklı veri üretir)."""
+    try:
+        y, m, d = tarih.split("-")
+        return int(y) * 10000 + int(m) * 100 + int(d)
+    except Exception:
+        return 20260101
+
+
+def _make_saatlik_veriler(junction_id: int, arm: str, date_seed: int) -> dict:
+    """144 slot (00:00–23:50) için araç sayısı üret — tarihe göre deterministik."""
     result = {}
     for slot in range(144):
         hour = slot // 6
         minute = (slot % 6) * 10
-        rng = random.Random(junction_id * 10000 + ord(arm) * 100 + slot)
+        rng = random.Random(date_seed * 1_000_000 + junction_id * 10000 + ord(arm) * 100 + slot)
         base = rng.uniform(5, 60) * _peak_factor(hour)
         key = f"{hour:02d}:{minute:02d}"
         result[key] = round(base)
@@ -90,6 +99,7 @@ def sensor_verileri(
     bolge_key = BOLGE_ALIASES.get(bolgeAdi.upper().strip(), bolgeAdi.upper().strip())
     junctions = BOLGE_MAP.get(bolge_key, {})
 
+    ds = _date_seed(tarih)
     data = []
     for jid, arms in junctions.items():
         for arm in arms:
@@ -97,7 +107,7 @@ def sensor_verileri(
                 "intersectionId": jid,
                 "edgeDirection": arm,
                 "edgeName": f"Kol {arm}",
-                "saatlikVeriler": _make_saatlik_veriler(jid, arm),
+                "saatlikVeriler": _make_saatlik_veriler(jid, arm, ds),
             })
 
     return {
