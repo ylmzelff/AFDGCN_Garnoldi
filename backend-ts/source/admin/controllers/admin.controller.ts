@@ -74,8 +74,8 @@ export const getRegionConfigs = async (req: Request, res: Response): Promise<voi
 }
 
 export const upsertRegionConfig = async (req: Request, res: Response): Promise<void> => {
-  const { city, region, description, junctionIds, useModel } = req.body as {
-    city?: string; region?: string; description?: string; junctionIds?: number[]; useModel?: boolean
+  const { city, region, description, junctionIds, useModel, bolgeAdi } = req.body as {
+    city?: string; region?: string; description?: string; junctionIds?: number[]; useModel?: boolean; bolgeAdi?: string
   }
   if (!city || !region || !Array.isArray(junctionIds)) {
     res.status(400).json({ error: true, code: 'VALIDATION', message: 'city, region, junctionIds (array) gerekli.' })
@@ -86,7 +86,7 @@ export const upsertRegionConfig = async (req: Request, res: Response): Promise<v
     update: { description: description ?? '', junctionIds, useModel: useModel ?? false },
     create: { city, region, description: description ?? '', junctionIds, useModel: useModel ?? false },
   })
-  REGION_CONFIG[region] = { city, junctionIds, useModel: useModel ?? false, description: description ?? '' }
+  REGION_CONFIG[region] = { city, junctionIds, useModel: useModel ?? false, description: description ?? '', bolgeAdi: bolgeAdi ?? '' }
   res.json(conf)
 }
 
@@ -136,7 +136,7 @@ export const uploadModelVersion = async (req: Request, res: Response): Promise<v
     data: {
       name, description: description ?? '', city, region,
       filePath: '',
-      weights: req.file.buffer,
+      weights: new Uint8Array(req.file.buffer),
       numNodes: Number(numNodes),
       lag: Number(lag ?? 1),
       horizon: Number(horizon ?? 1),

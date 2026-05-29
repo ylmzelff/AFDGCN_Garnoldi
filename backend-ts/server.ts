@@ -121,7 +121,7 @@ async function startup(): Promise<void> {
 
       if (!existingModel && hasDummy) {
         // İlk kez: oluştur
-        const weights = require('fs').readFileSync(dummyPthPath) as Buffer
+        const weights = new Uint8Array(require('fs').readFileSync(dummyPthPath) as Buffer)
         await prisma.modelVersion.create({
           data: {
             name: 'kayseri_ildem_v1',
@@ -137,7 +137,7 @@ async function startup(): Promise<void> {
         console.info('🌱 Seed model DB\'ye yüklendi (kayseri_ildem_v1, 34 node)')
       } else if (existingModel && !existingModel.weights && hasDummy) {
         // Eski kayıt: weights ekle + numNodes güncelle
-        const weights = require('fs').readFileSync(dummyPthPath) as Buffer
+        const weights = new Uint8Array(require('fs').readFileSync(dummyPthPath) as Buffer)
         await prisma.modelVersion.update({
           where: { id: existingModel.id },
           data: { weights, numNodes: 34, lag: 1, filePath: '' },

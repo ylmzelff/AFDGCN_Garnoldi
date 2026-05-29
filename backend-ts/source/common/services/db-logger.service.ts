@@ -26,7 +26,7 @@ export async function logPrediction(response: RegionPhaseResponse | RegionPredic
     let junctionCount = 0
     let timeLabel = ''
     let predictionSource = ''
-    let kayseriApiStatus = false
+    let kayseriApiStatus: string = 'false'
     let city = 'kayseri'
 
     if ('junctions' in response && Array.isArray(response.junctions)) {
@@ -35,7 +35,7 @@ export async function logPrediction(response: RegionPhaseResponse | RegionPredic
       junctionCount = response.junctions.length
       timeLabel = response.timeLabel ?? ''
       predictionSource = response.predictionSource ?? ''
-      kayseriApiStatus = response.kayseriApiStatus ?? false
+      kayseriApiStatus = response.kayseriApiStatus ?? 'false'
       city = response.city ?? 'kayseri'
     } else if ('predictions' in response && response.predictions) {
       // RegionPredictionResult
@@ -45,7 +45,7 @@ export async function logPrediction(response: RegionPhaseResponse | RegionPredic
       junctionCount = Object.keys(response.predictions).length
       timeLabel = response.time_label ?? ''
       predictionSource = response.source ?? ''
-      kayseriApiStatus = response.kayseri_ok ?? false
+      kayseriApiStatus = String(response.kayseri_ok ?? false)
     }
 
     await prisma.phasePrediction.create({

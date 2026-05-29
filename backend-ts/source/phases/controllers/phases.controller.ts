@@ -4,7 +4,7 @@ import { logPrediction } from '../../common/services/db-logger.service'
 import { REGION_CONFIG } from '../../predict/services/real-time-predictor.service'
 
 export const getRegionPhases = async (req: Request, res: Response): Promise<void> => {
-  const region = req.params.region?.toLowerCase().trim()
+  const region = (req.params['region'] as string)?.toLowerCase().trim()
   if (!region || !REGION_CONFIG[region]) {
     res.status(404).json({ error: true, code: 'REGION_NOT_FOUND', message: `Bölge '${region}' bulunamadı.` })
     return
