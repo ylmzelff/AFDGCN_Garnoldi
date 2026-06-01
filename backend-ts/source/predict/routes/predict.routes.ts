@@ -6,6 +6,7 @@ const router = Router()
 
 router.get('/regions', authMiddleware, PredictController.listRegions)
 router.get('/status', authMiddleware, PredictController.getPredictionStatus)
+router.get('/day-ahead', authMiddleware, PredictController.predictDayAhead)
 router.post('/region/:region', authMiddleware, PredictController.predictRegion)
 router.post('/junction/:junction_id', authMiddleware, PredictController.predictJunction)
 

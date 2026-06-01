@@ -89,6 +89,22 @@ export class KayseriClientService {
 
     const tarih = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
 
+    return this.fetchRegionForDate(region, tarih, _city)
+  }
+
+  /**
+   * Belirli bir tarih icin bolge verisini ceker (gun-oncesi tohum verisi icin).
+   * tarih: "YYYY-MM-DD" formati
+   */
+  async fetchRegionForDate(
+    region: string,
+    tarih: string,
+    _city = 'kayseri',
+  ): Promise<Record<number, ArmData[]>> {
+    const regionKey = region.toLowerCase()
+    const regionCfg = REGION_CONFIG[regionKey]
+    const bolgeAdi = regionCfg?.bolgeAdi || regionKey.toUpperCase()
+
     console.info(`[kayseri-client] AusTKM veri cekiliyor: bolgeAdi=${bolgeAdi}, tarih=${tarih}`)
 
     const resp = await this.http.get<AusTkmResponse>('/api/SensorVerileri', {

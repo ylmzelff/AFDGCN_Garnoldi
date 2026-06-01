@@ -48,11 +48,14 @@ class Engine(object):
         total_rmse = 0
         total_mape = 0
         for batch_idx, (data, target) in enumerate(self.train_loader):
-            data = data[..., :1]
-            label = target[..., :1].to(data.device)    # (..., 1)
-            # data and target shape: B, T, N, F; output shape: B, T, N, F
+            # data: (B, T, N, D) — tüm özellikler (flow + temporal features)
+            # label: (B, horizon, N, 1) — yalnizca tahmin edilen flow
+            label = target[..., :1].to(data.device)
             self.optimizer.zero_grad()
-            output = self.model(data)#afdgcn forward 
+            # Ogretmen zorlama: ilk epoch'larda gercek degerleri kullan,
+            # sonra giderek azalt ki model bagimsiz tahmin yapmayı ogrensin
+            tf_ratio = max(0.0, 0.5 - (self.current_epoch - 1) * 0.005)
+            output = self.model(data, target=label, teacher_forcing_ratio=tf_ratio)
             output = output.to(label.device)
             if self.args.real_value:
                 output = self.scaler.inverse_transform(output)
@@ -96,9 +99,8 @@ class Engine(object):
         results = { 'Output': []}
         with torch.no_grad():
             for batch_idx, (data, target) in enumerate(val_dataloader):
-                data = data[..., :1]
-                label = target[..., :1].to(data.device) 
-                output = self.model(data)
+                label = target[..., :1].to(data.device)
+                output = self.model(data)  # val/test: ogretmen zorlama yok
                 y_true.append(label)
                 y_pred.append(output)
                 output = output.to(label.device)
@@ -197,6 +199,9 @@ class Engine(object):
                     checkpoint['scaler_mean'] = _scaler_mean
                 if _scaler_std is not None:
                     checkpoint['scaler_std'] = _scaler_std
+                # Model meta-verisi: inference sirasinda dogru input_dim ve tod bilgisi
+                checkpoint['input_dim'] = getattr(self.args, 'input_dim', 1)
+                checkpoint['tod_enabled'] = getattr(self.args, 'tod', False)
                 torch.save(checkpoint, self.best_path)
 
         with open('mae_values.csv', 'w', newline='') as csvfile:
@@ -247,7 +252,7 @@ class Engine(object):
         real_flow = {'Target': []}
         with torch.no_grad():
             for batch_idx, (data, target) in enumerate(data_loader):
-                data = data[..., :1].to(args.device)
+                data = data.to(args.device)
                 label = target[..., :1].to(args.device)
                 output = model(data)
                 #results['Input'].extend(data.cpu().numpy())

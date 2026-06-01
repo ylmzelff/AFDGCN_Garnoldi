@@ -167,28 +167,34 @@ train_loader, val_loader, test_loader, scaler = get_dataloader(args,
                                                                single=False)
 print("train loader ",len(train_loader))
 # *****************************************  初始化模型参数 ****************************************** #
-input_dim = 1
-hidden_dim = 64 
+# input_dim: flow(1) + tod(2 if True) + dow(2 if True)
+input_dim = 1 + (2 if args.tod else 0) + (2 if getattr(args, 'dow', False) else 0)
+args.input_dim = input_dim  # engine.py checkpoint'e kaydedecek
+hidden_dim = 64
 output_dim = 1
-embed_dim = 34 #307 #34 #19#8   if you used adj, number of nodes should be entered here
+embed_dim = 34
 cheb_k = 2
-horizon = 1
-num_layers = 1 
+horizon = args.horizon
+num_layers = 1
 heads = 4
-timesteps = 1
+timesteps = args.lag
 kernel_size = 5
-model = Network(num_node = args.num_nodes, 
-                input_dim = input_dim, 
-                hidden_dim = hidden_dim, 
-                output_dim = output_dim, 
-                embed_dim = embed_dim, 
-                cheb_k = cheb_k, 
-                horizon = horizon, 
-                num_layers = num_layers, 
-                heads = heads, 
-                timesteps = timesteps, 
+# Seq2Seq GRU decoder: algoritmanin kendisi horizon adim ileri tahmin yapar
+use_seq2seq = True
+print(f"Model: input_dim={input_dim}, timesteps={timesteps}, horizon={horizon}, seq2seq={use_seq2seq}")
+model = Network(num_node = args.num_nodes,
+                input_dim = input_dim,
+                hidden_dim = hidden_dim,
+                output_dim = output_dim,
+                embed_dim = embed_dim,
+                cheb_k = cheb_k,
+                horizon = horizon,
+                num_layers = num_layers,
+                heads = heads,
+                timesteps = timesteps,
                 A = A,
-                kernel_size=kernel_size)
+                kernel_size = kernel_size,
+                use_seq2seq = use_seq2seq)
 model = model.to(args.device)
 os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3,4'
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

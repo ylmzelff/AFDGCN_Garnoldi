@@ -357,6 +357,88 @@ export class RealTimePredictorService {
     }
   }
 
+  /**
+   * Hedef tarih icin tum gunu (144 slot) otoregresif tahmin eder.
+   * targetDate: "YYYY-MM-DD" — tahmin edilecek gun
+   * Tohum: bir onceki gunun gercek verisi Kayseri API'den cekilir.
+   */
+  async predictDayAhead(
+    region: string,
+    targetDate: string,
+  ): Promise<{
+    region: string
+    date: string
+    prediction_series: Record<number, Record<string, number[]>>
+    slot_labels: string[]
+    source: 'AFDGCN' | 'moving_average'
+  }> {
+    const config = REGION_CONFIG[region]
+    if (!config) throw new Error(`Bilinmeyen bolge: ${region}`)
+
+    // Tohum: hedef tarihten 1 gun oncesi
+    const targetMs = new Date(targetDate).getTime()
+    const seedDate = new Date(targetMs - 86_400_000).toISOString().slice(0, 10)
+
+    let seedData: Record<number, import('./kayseri-client.service').ArmData[]> | null = null
+    try {
+      seedData = await this.kayseriClient.fetchRegionForDate(region, seedDate)
+    } catch {
+      console.warn(`[day-ahead] Kayseri API'den tohum veri alinamadi (${seedDate}), bos tohum kullanilacak`)
+    }
+
+    const slotLabel = (i: number) => {
+      const hh = Math.floor(i / 6)
+      const mm = (i % 6) * 10
+      return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
+    }
+    const slotLabels = Array.from({ length: 144 }, (_, i) => slotLabel(i))
+
+    let predictionSeries: Record<number, Record<string, number[]>>
+    let source: 'AFDGCN' | 'moving_average' = 'moving_average'
+
+    if (seedData && config.useModel) {
+      const result = await this.pythonModel.predictDayAhead(seedData, 143)
+      if (result) {
+        predictionSeries = result.series
+        source = result.source
+      } else {
+        predictionSeries = this.buildFallbackDayAhead(config.junctionIds)
+      }
+    } else {
+      predictionSeries = this.buildFallbackDayAhead(config.junctionIds, seedData ?? undefined)
+    }
+
+    return { region, date: targetDate, prediction_series: predictionSeries, slot_labels: slotLabels, source }
+  }
+
+  /** Model yokken deterministik saatlik ortalama fallback uretir. */
+  private buildFallbackDayAhead(
+    junctionIds: number[],
+    seedData?: Record<number, import('./kayseri-client.service').ArmData[]>,
+  ): Record<number, Record<string, number[]>> {
+    const result: Record<number, Record<string, number[]>> = {}
+    const PEAK_PATTERN = Array.from({ length: 144 }, (_, i) => {
+      const h = Math.floor(i / 6)
+      if (h >= 7 && h <= 9) return 1.8
+      if (h >= 17 && h <= 19) return 1.5
+      if (h >= 12 && h <= 13) return 1.2
+      if (h < 5 || h >= 23) return 0.3
+      return 0.8
+    })
+
+    for (const jid of junctionIds) {
+      const seedArms = seedData?.[jid]
+      result[jid] = {}
+      const arms = seedArms?.map((a) => String(a['edge_direction'] ?? '').toUpperCase()).filter(Boolean) ?? ['A', 'B', 'C', 'D']
+      for (const arm of arms) {
+        const seedArm = seedArms?.find((a) => String(a['edge_direction'] ?? '').toUpperCase() === arm)
+        const baseVal = seedArm ? (Number(seedArm['72'] ?? seedArm['84'] ?? 20)) : 20
+        result[jid][arm] = PEAK_PATTERN.map((factor) => Math.round(baseVal * factor))
+      }
+    }
+    return result
+  }
+
   async getCacheStatus(): Promise<object> {
     return this.cache.getStatus()
   }

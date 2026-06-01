@@ -41,10 +41,11 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 
 NUM_NODES: int = 34
-LAG: int = 1
-HORIZON: int = 1
+LAG: int = 12
+HORIZON: int = 144        # Seq2Seq decoder tum gunu tek forward pass'ta uretir
 SCALER_MEAN: float = 28.53
 SCALER_STD: float = 38.72
+SLOTS_PER_DAY: int = 144  # 10-dakikalik araliklar
 
 # junction_id → {arm_letter: node_index}
 ILDEM_NODE_MAP: Dict[int, Dict[str, int]] = {
@@ -146,10 +147,14 @@ _model_lag: int = LAG
 _model_lock = asyncio.Lock()
 
 # True ise model zaten raw (denormalize) değer çıkarıyor, _denormalize() uygulanmaz.
-# real_value=True ile eğitilen modeller raw çıktı üretir.
 _model_outputs_raw: bool = True
 
-_MAX_HISTORY = 12
+# Modelin beklediği input_dim (1=sadece flow, 3=flow+sin_tod+cos_tod)
+_model_input_dim: int = 1
+# True ise inference sirasinda sin/cos zaman-icin-gun ozellikleri eklenir
+_model_tod_enabled: bool = False
+
+_MAX_HISTORY = 24  # lag=12 icin en az 12, biraz pay birakiyoruz
 _history: List[np.ndarray] = []
 
 # Aktif node map (region'a göre değişebilir)
@@ -180,7 +185,21 @@ def _build_adj() -> torch.Tensor:
 # Model yükleme
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _try_load(path: Path):
+def _detect_input_dim(state_dict: dict) -> int:
+    """
+    Checkpoint'ten input_dim'i okur. Kaydedildiyse 'input_dim' anahtarindan,
+    yoksa 'feature_attention.weight' seklindan cikarir, bulamazsa 1 doner.
+    """
+    if 'input_dim' in state_dict:
+        return int(state_dict['input_dim'])
+    # feature_attention (1D conv): weight shape (out_ch, in_ch, kernel_size)
+    fa_key = 'feature_attention.weight'
+    if fa_key in state_dict:
+        return int(state_dict[fa_key].shape[1])
+    return 1
+
+
+def _try_load(path: Path, input_dim: int = 1, tod_enabled: bool = False):
     """
     Verilen .pth dosyasından AFDGCN Model yüklemeyi dener.
     node_embedding boyutu NUM_NODES ile uyuşmuyorsa None döner.
@@ -192,9 +211,13 @@ def _try_load(path: Path):
     # Checkpoint dict formatı (scaler bilgisi içerebilir)
     _ckpt_scaler_mean = None
     _ckpt_scaler_std = None
+    _ckpt_input_dim = None
+    _ckpt_tod = None
     if isinstance(state_dict, dict) and 'state_dict' in state_dict:
         _ckpt_scaler_mean = state_dict.get('scaler_mean')
         _ckpt_scaler_std = state_dict.get('scaler_std')
+        _ckpt_input_dim = state_dict.get('input_dim')
+        _ckpt_tod = state_dict.get('tod_enabled')
         state_dict = state_dict['state_dict']
 
     if "node_embedding" not in state_dict:
@@ -214,13 +237,17 @@ def _try_load(path: Path):
     lag = int(state_dict[pe_key].shape[1]) if pe_key in state_dict else LAG
     horizon = int(state_dict[nconv_key].shape[0]) if nconv_key in state_dict else HORIZON
 
+    # input_dim: checkpoint'ten > parametre > otomatik tespitle
+    resolved_input_dim = _ckpt_input_dim or input_dim or _detect_input_dim(state_dict)
+    resolved_tod = _ckpt_tod if _ckpt_tod is not None else tod_enabled
+
     A = _build_adj()
     saved_algo = afdgcn_mod.ALGO
     try:
         afdgcn_mod.ALGO = "Garnoldi"
         net = afdgcn_mod.Model(
             num_node   = NUM_NODES,
-            input_dim  = 1,
+            input_dim  = resolved_input_dim,
             hidden_dim = 64,
             output_dim = 1,
             embed_dim  = e_dim,
@@ -237,16 +264,18 @@ def _try_load(path: Path):
 
     net.load_state_dict(state_dict, strict=False)
     net.eval()
-    global SCALER_MEAN, SCALER_STD, _model_outputs_raw
+    global SCALER_MEAN, SCALER_STD, _model_outputs_raw, _model_input_dim, _model_tod_enabled
     if _ckpt_scaler_mean is not None and _ckpt_scaler_std is not None:
         SCALER_MEAN = float(_ckpt_scaler_mean)
         SCALER_STD = float(_ckpt_scaler_std)
         logger.info("Scaler .pth'dan yüklendi: mean=%.4f std=%.4f", SCALER_MEAN, SCALER_STD)
-    # real_value_output bayrağı: checkpoint'te yoksa True (mevcut tüm modeller real_value=True ile eğitildi)
     raw_flag = state_dict if isinstance(state_dict, dict) else {}
     _model_outputs_raw = bool(raw_flag.pop('real_value_output', True))
-    logger.info("Model çıktı modu: %s", 'RAW (denorm yok)' if _model_outputs_raw else 'NORM (denorm uygulanır)')
-    logger.info("✅ Model yüklendi: %s (%d node, lag=%d)", path.name, NUM_NODES, lag)
+    _model_input_dim = resolved_input_dim
+    _model_tod_enabled = bool(resolved_tod)
+    logger.info("Model cikti modu: %s", 'RAW (denorm yok)' if _model_outputs_raw else 'NORM (denorm uygulanir)')
+    logger.info("Model yuklendi: %s (%d node, lag=%d, input_dim=%d, tod=%s)",
+                path.name, NUM_NODES, lag, resolved_input_dim, resolved_tod)
     return net, lag
 
 
@@ -273,7 +302,7 @@ async def ensure_model_loaded() -> None:
         _model_ready = True
 
 
-def _try_load_from_bytes(data: bytes):
+def _try_load_from_bytes(data: bytes, input_dim: int = 1, tod_enabled: bool = False):
     """
     Ham .pth bytes'ından AFDGCN modelini yükler.
     _try_load() ile aynı doğrulama mantığını izler.
@@ -284,12 +313,15 @@ def _try_load_from_bytes(data: bytes):
     buf = io.BytesIO(data)
     state_dict = torch.load(buf, map_location="cpu", weights_only=True)
 
-    # Checkpoint dict formatı (scaler bilgisi içerebilir)
     _ckpt_scaler_mean = None
     _ckpt_scaler_std = None
+    _ckpt_input_dim = None
+    _ckpt_tod = None
     if isinstance(state_dict, dict) and 'state_dict' in state_dict:
         _ckpt_scaler_mean = state_dict.get('scaler_mean')
         _ckpt_scaler_std = state_dict.get('scaler_std')
+        _ckpt_input_dim = state_dict.get('input_dim')
+        _ckpt_tod = state_dict.get('tod_enabled')
         state_dict = state_dict['state_dict']
 
     if "node_embedding" not in state_dict:
@@ -309,13 +341,16 @@ def _try_load_from_bytes(data: bytes):
     lag = int(state_dict[pe_key].shape[1]) if pe_key in state_dict else LAG
     horizon = int(state_dict[nconv_key].shape[0]) if nconv_key in state_dict else HORIZON
 
+    resolved_input_dim = _ckpt_input_dim or input_dim or _detect_input_dim(state_dict)
+    resolved_tod = _ckpt_tod if _ckpt_tod is not None else tod_enabled
+
     A = _build_adj()
     saved_algo = afdgcn_mod.ALGO
     try:
         afdgcn_mod.ALGO = "Garnoldi"
         net = afdgcn_mod.Model(
             num_node   = NUM_NODES,
-            input_dim  = 1,
+            input_dim  = resolved_input_dim,
             hidden_dim = 64,
             output_dim = 1,
             embed_dim  = e_dim,
@@ -332,15 +367,17 @@ def _try_load_from_bytes(data: bytes):
 
     net.load_state_dict(state_dict, strict=False)
     net.eval()
-    global SCALER_MEAN, SCALER_STD, _model_outputs_raw
+    global SCALER_MEAN, SCALER_STD, _model_outputs_raw, _model_input_dim, _model_tod_enabled
     if _ckpt_scaler_mean is not None and _ckpt_scaler_std is not None:
         SCALER_MEAN = float(_ckpt_scaler_mean)
         SCALER_STD = float(_ckpt_scaler_std)
-        logger.info("Scaler bytes'dan yüklendi: mean=%.4f std=%.4f", SCALER_MEAN, SCALER_STD)
+        logger.info("Scaler bytes'dan yuklendi: mean=%.4f std=%.4f", SCALER_MEAN, SCALER_STD)
     raw_flag = state_dict if isinstance(state_dict, dict) else {}
     _model_outputs_raw = bool(raw_flag.pop('real_value_output', True))
-    logger.info("Model çıktı modu: %s", 'RAW (denorm yok)' if _model_outputs_raw else 'NORM (denorm uygulanır)')
-    logger.info("Model bytes'dan yuklendi (%d node, lag=%d)", NUM_NODES, lag)
+    _model_input_dim = resolved_input_dim
+    _model_tod_enabled = bool(resolved_tod)
+    logger.info("Model bytes'dan yuklendi (%d node, lag=%d, input_dim=%d, tod=%s)",
+                NUM_NODES, lag, resolved_input_dim, resolved_tod)
     return net, lag
 
 
@@ -486,11 +523,38 @@ def belediye_to_node_vector(
 _INFERENCE_LOCK = asyncio.Lock()
 
 
+def _build_temporal_features(flow_window: np.ndarray, window_start_slot: int) -> np.ndarray:
+    """
+    flow_window: (lag, NUM_NODES) normalize edilmis arac sayisi
+    window_start_slot: penceredeki ilk slotun gun-icindeki indeksi (0-143)
+    Returns: (lag, NUM_NODES, 3) = [flow, sin_tod, cos_tod]
+    """
+    lag = flow_window.shape[0]
+    slots = np.array([(window_start_slot + k) % SLOTS_PER_DAY for k in range(lag)], dtype=np.float32)
+    sin_tod = np.sin(2 * np.pi * slots / SLOTS_PER_DAY)
+    cos_tod = np.cos(2 * np.pi * slots / SLOTS_PER_DAY)
+
+    flow_3d = flow_window[:, :, np.newaxis]                               # (lag, N, 1)
+    sin_3d  = np.tile(sin_tod[:, np.newaxis, np.newaxis], (1, NUM_NODES, 1))  # (lag, N, 1)
+    cos_3d  = np.tile(cos_tod[:, np.newaxis, np.newaxis], (1, NUM_NODES, 1))  # (lag, N, 1)
+    return np.concatenate([flow_3d, sin_3d, cos_3d], axis=-1)             # (lag, N, 3)
+
+
 def _run_forward(net, x_norm: np.ndarray) -> np.ndarray:
-    """Senkron AFDGCN forward pass. x_norm: (lag, NUM_NODES)"""
+    """
+    Senkron AFDGCN forward pass.
+    x_norm: (lag, NUM_NODES)          → D=1 olarak islenir
+            (lag, NUM_NODES, D)       → D boyutu korunur
+    """
     import model.AFDGCN as afdgcn_mod
 
-    x_t = torch.tensor(x_norm, dtype=torch.float32).unsqueeze(0).unsqueeze(-1)
+    if x_norm.ndim == 2:
+        # (lag, N) → (1, lag, N, 1)
+        x_t = torch.tensor(x_norm, dtype=torch.float32).unsqueeze(0).unsqueeze(-1)
+    else:
+        # (lag, N, D) → (1, lag, N, D)
+        x_t = torch.tensor(x_norm, dtype=torch.float32).unsqueeze(0)
+
     saved = afdgcn_mod.ALGO
     try:
         afdgcn_mod.ALGO = "Garnoldi"
@@ -557,12 +621,16 @@ async def predict_next_timestep(
     history_norm = _normalize(history_arr)
 
     if _model is not None:
+        if _model_tod_enabled:
+            window_start_slot = max(0, current_minute_index - lag_needed + 1) % SLOTS_PER_DAY
+            model_input = _build_temporal_features(history_norm, window_start_slot)
+        else:
+            model_input = history_norm
         async with _INFERENCE_LOCK:
             loop = asyncio.get_event_loop()
             model_out = await loop.run_in_executor(
-                None, _run_forward, _model, history_norm
+                None, _run_forward, _model, model_input
             )
-        # real_value=True ile eğitilen model zaten raw değer çıkarır
         pred = np.clip(model_out, 0, None) if _model_outputs_raw else np.clip(_denormalize(model_out), 0, None)
     else:
         pred_norm = _moving_average_predict(history_norm)
@@ -582,51 +650,54 @@ def _predict_rolling_series_sync(
     completed_idx: int,
 ) -> Dict[int, Dict[str, List[float]]]:
     """
-    Gün başından completed_idx dahil her slot için gerçek bir-adım-ileride tahmin üretir.
+    Seq2Seq gun-ici tahmin serisi — tek forward pass.
 
-    Slot i tahmini: model(actual[i-lag .. i-1]) → slot i araç sayısı
-    Yani tahmin üretilirken slot i'nin gerçek değeri KULLANILMAZ (data leakage yok).
+    Model son lag slotunu girdi olarak alir, Seq2Seq decoder
+    geri kalan tum gunu tek seferde uretiyor (horizon=144).
 
-    Returns: {jid: {arm: [pred_slot_0, pred_slot_1, ..., pred_slot_completed_idx]}}
+    completed_idx: saat gun ilerledikce artar (0-143).
+    Gerçek veri [0..completed_idx], tahmin [completed_idx+1..143].
     """
-    n_slots = completed_idx + 1
     lag = _model_lag if _model is not None else LAG
 
-    # Tüm slotlar için gerçek vektörleri önceden hazırla
-    actual = np.zeros((n_slots, NUM_NODES), dtype=np.float32)
-    for s in range(n_slots):
+    # Tüm mevcut gercek vektorler
+    n_actual = completed_idx + 1
+    actual = np.zeros((n_actual, NUM_NODES), dtype=np.float32)
+    for s in range(n_actual):
         actual[s] = belediye_to_node_vector(data_by_junction, s)
 
-    result_series = np.zeros((n_slots, NUM_NODES), dtype=np.float32)
+    # Encoder penceresi: son lag gercek slot
+    if n_actual >= lag:
+        window = actual[-lag:]
+        window_start_slot = (completed_idx - lag + 1) % SLOTS_PER_DAY
+    else:
+        pad = np.zeros((lag - n_actual, NUM_NODES), dtype=np.float32)
+        window = np.vstack([pad, actual])
+        window_start_slot = 0
 
-    for i in range(n_slots):
-        # Slot i'yi predict etmek için [i-lag .. i-1] penceresini kullan
-        if i == 0:
-            # Hiç geçmiş yok — sıfır vektörüyle tahmin
-            window = np.zeros((lag, NUM_NODES), dtype=np.float32)
-        elif i < lag:
-            # Yeterli geçmiş yok — sola sıfır dolgusuy
-            pad = np.zeros((lag - i, NUM_NODES), dtype=np.float32)
-            window = np.vstack([pad, actual[:i]])
+    window_norm = _normalize(window)
+
+    if _model is not None:
+        if _model_tod_enabled:
+            model_input = _build_temporal_features(window_norm, window_start_slot)
         else:
-            window = actual[i - lag : i]
+            model_input = window_norm
+        # TEK forward pass → decoder tum 144 slotu model icinde uretiyor
+        model_out = _run_forward(_model, model_input)       # (144, N)
+        full_day = np.clip(model_out, 0, None) if _model_outputs_raw \
+                   else np.clip(_denormalize(model_out), 0, None)
+    else:
+        pred_norm = _moving_average_predict(window_norm)
+        base = np.clip(_denormalize(pred_norm), 0, None)[0]
+        full_day = np.tile(base, (SLOTS_PER_DAY, 1))       # (144, N) sabit tahmin
 
-        window_norm = _normalize(window)
+    # Gercek veri [0..completed_idx] + tahmin [completed_idx+1..143]
+    result_series = np.vstack([actual, full_day[n_actual:]])  # (144, N)
 
-        if _model is not None:
-            model_out = _run_forward(_model, window_norm)
-            pred = np.clip(model_out, 0, None) if _model_outputs_raw else np.clip(_denormalize(model_out), 0, None)
-        else:
-            pred_norm = _moving_average_predict(window_norm)
-            pred = np.clip(_denormalize(pred_norm), 0, None)
-
-        result_series[i] = pred[0]  # (NUM_NODES,)
-
-    # Node vektörünü kavşak/kol sözlüğüne çevir
     out: Dict[int, Dict[str, List[float]]] = {}
     for jid, arm_map in _node_map.items():
         out[jid] = {
-            arm: [float(result_series[s, node_idx]) for s in range(n_slots)]
+            arm: [float(result_series[s, node_idx]) for s in range(SLOTS_PER_DAY)]
             for arm, node_idx in arm_map.items()
         }
     return out
@@ -651,6 +722,90 @@ async def predict_rolling_series(
         )
 
 
+def _predict_full_day_sync(
+    seed_data_by_junction: Dict[int, List[dict]],
+    seed_completed_idx: int = 143,
+) -> Dict[int, Dict[str, List[float]]]:
+    """
+    Seq2Seq gun-oncesi tahmin — TEK model forward pass.
+
+    Garnoldi encoder'i son lag slotunu okuyor, Seq2Seq GRU decoder
+    144 slotun tamamini tek seferde model icinde uretiyor.
+    Dis dongü yok — algoritmanin kendisi yapiyor.
+
+    seed_data_by_junction: Bir onceki gunun gercek verisi (belediye API formati)
+    seed_completed_idx:    Tohum verideki son gecerli slot (genellikle 143 = 23:50)
+    """
+    lag = _model_lag if _model is not None else LAG
+
+    # Tohum: onceki gunun son 'lag' slotunu pencere olarak al
+    seed_len = seed_completed_idx + 1
+    seed_actual = np.zeros((seed_len, NUM_NODES), dtype=np.float32)
+    for s in range(seed_len):
+        seed_actual[s] = belediye_to_node_vector(seed_data_by_junction, s)
+
+    # Son lag slotu: onceki gunun sonu (00:00'dan hemen oncesi)
+    if seed_len >= lag:
+        window = seed_actual[-lag:]                         # (lag, N)
+    else:
+        pad = np.zeros((lag - seed_len, NUM_NODES), dtype=np.float32)
+        window = np.vstack([pad, seed_actual])              # (lag, N)
+
+    window_norm = _normalize(window)
+
+    # Temporal feature: pencere onceki gunun son lag slotuna ait
+    window_start_slot = (seed_completed_idx - lag + 1) % SLOTS_PER_DAY
+    if _model_tod_enabled:
+        model_input = _build_temporal_features(window_norm, window_start_slot)
+    else:
+        model_input = window_norm
+
+    if _model is not None:
+        # TEK forward pass → Seq2Seq decoder 144 adimi model icinde uretiyor
+        model_out = _run_forward(_model, model_input)       # (horizon=144, N)
+        predicted = np.clip(model_out, 0, None) if _model_outputs_raw \
+                    else np.clip(_denormalize(model_out), 0, None)
+    else:
+        # Fallback: hareketli ortalama tabanlı gun pattern'i
+        base = np.clip(_denormalize(_moving_average_predict(window_norm)), 0, None)[0]
+        peak = np.array([
+            1.8 if 42 <= s <= 54 else   # 07:00-09:00
+            1.5 if 102 <= s <= 114 else  # 17:00-19:00
+            1.2 if 72 <= s <= 78 else    # 12:00-13:00
+            0.3 if s < 30 or s >= 138 else 0.8
+            for s in range(SLOTS_PER_DAY)
+        ], dtype=np.float32)
+        predicted = np.outer(peak, base)                    # (144, N)
+
+    n_slots = predicted.shape[0]
+    out: Dict[int, Dict[str, List[float]]] = {}
+    for jid, arm_map in _node_map.items():
+        out[jid] = {
+            arm: [float(predicted[s, node_idx]) for s in range(n_slots)]
+            for arm, node_idx in arm_map.items()
+        }
+    return out
+
+
+async def predict_full_day(
+    seed_data_by_junction: Dict[int, List[dict]],
+    seed_completed_idx: int = 143,
+) -> Dict[int, Dict[str, List[float]]]:
+    """
+    Async wrapper — bir sonraki gun icin tam-gun (144 slot) otoregresif tahmin.
+    seed_data_by_junction: onceki gunun gercek verisi (belediye API formati).
+    """
+    await ensure_model_loaded()
+    async with _INFERENCE_LOCK:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            _predict_full_day_sync,
+            seed_data_by_junction,
+            seed_completed_idx,
+        )
+
+
 def get_model_status() -> dict:
     """Wrapper durumunu döndürür (sağlık endpoint'i için)."""
     return {
@@ -659,6 +814,8 @@ def get_model_status() -> dict:
         "num_nodes": NUM_NODES,
         "lag": _model_lag,
         "horizon": HORIZON,
+        "input_dim": _model_input_dim,
+        "tod_enabled": _model_tod_enabled,
         "scaler_mean": SCALER_MEAN,
         "scaler_std": SCALER_STD,
         "fallback_active": _model is None,

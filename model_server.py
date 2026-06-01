@@ -60,18 +60,32 @@ class PredictSeriesResponse(BaseModel):
 class LoadModelRequest(BaseModel):
     path: str
     num_nodes: int = 34
-    lag: int = 1
-    horizon: int = 1
+    lag: int = 12
+    horizon: int = 6
     scaler_mean: float = 28.53
     scaler_std: float = 38.72
+    input_dim: int = 3
+    tod_enabled: bool = True
 
 
 class LoadModelFromBytesRequest(BaseModel):
     num_nodes: int = 34
-    lag: int = 1
-    horizon: int = 1
+    lag: int = 12
+    horizon: int = 6
     scaler_mean: float = 28.53
     scaler_std: float = 38.72
+    input_dim: int = 3
+    tod_enabled: bool = True
+
+
+class PredictDayAheadRequest(BaseModel):
+    seed_data_by_junction: Dict[int, List[dict]]
+    seed_completed_idx: int = 143
+
+
+class PredictDayAheadResponse(BaseModel):
+    prediction_series: Dict[int, Dict[str, List[float]]]
+    source: str  # "AFDGCN" | "moving_average"
 
 
 class LoadModelResponse(BaseModel):
@@ -152,6 +166,27 @@ async def predict_series(body: PredictSeriesRequest):
             status_code=500,
             content={"detail": str(exc)},
         )
+
+
+@app.post("/predict/day-ahead", response_model=PredictDayAheadResponse)
+async def predict_day_ahead(body: PredictDayAheadRequest):
+    """
+    Bir onceki gunun gercek verisi tohum alinarak bir sonraki gun icin
+    tum 144 slot otoregresif tahmin uretir.
+    """
+    from ml.prediction_wrapper import predict_full_day, get_model_status
+
+    try:
+        series = await predict_full_day(
+            body.seed_data_by_junction,
+            body.seed_completed_idx,
+        )
+        status = get_model_status()
+        source = "moving_average" if status.get("fallback_active") else "AFDGCN"
+        return PredictDayAheadResponse(prediction_series=series, source=source)
+    except Exception as exc:
+        logger.error("Gun-oncesi tahmin hatasi: %s", exc)
+        return JSONResponse(status_code=500, content={"detail": str(exc)})
 
 
 @app.get("/model/status")
