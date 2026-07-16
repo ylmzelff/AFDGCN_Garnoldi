@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 NUM_NODES: int = 34
 LAG: int = 12
-HORIZON: int = 144        # Seq2Seq decoder tum gunu tek forward pass'ta uretir
+HORIZON: int = 144        # tam gun (144 slot) icin varsayilan ufuk
 SCALER_MEAN: float = 28.53
 SCALER_STD: float = 38.72
 SLOTS_PER_DAY: int = 144  # 10-dakikalik araliklar
@@ -129,8 +129,7 @@ _CACHED_MODEL_PATH = PROJECT_ROOT / "saved_models" / "_active_model_cache.pth"
 # Varsayılan model arama sırası — önce önbellek, sonra gerçek model dosyaları
 _DEFAULT_MODEL_PATHS = [
     _CACHED_MODEL_PATH,
-    PROJECT_ROOT / "saved_models" / "kayseri_ildem_34.pth",
-    PROJECT_ROOT / "saved_models" / "kayseri_ildem_34_dummy.pth",
+    PROJECT_ROOT / "saved_models" / "kayseri_ildem_v1.pth",
 ]
 
 # Aktif model dosya yolu (DB'den aktivasyon yapıldığında güncellenir)
@@ -273,7 +272,7 @@ def _try_load(path: Path, input_dim: int = 1, tod_enabled: bool = False):
     _model_outputs_raw = bool(raw_flag.pop('real_value_output', True))
     _model_input_dim = resolved_input_dim
     _model_tod_enabled = bool(resolved_tod)
-    logger.info("Model cikti modu: %s", 'RAW (denorm yok)' if _model_outputs_raw else 'NORM (denorm uygulanir)')
+    logger.info("Model cikti modu: %s", 'RAW' if _model_outputs_raw else 'NORM')
     logger.info("Model yuklendi: %s (%d node, lag=%d, input_dim=%d, tod=%s)",
                 path.name, NUM_NODES, lag, resolved_input_dim, resolved_tod)
     return net, lag
@@ -569,6 +568,52 @@ def _run_forward(net, x_norm: np.ndarray) -> np.ndarray:
     return out_np  # (horizon, 34)
 
 
+def _autoregress(
+    net,
+    window_norm: np.ndarray,   # (lag, N) normalized
+    window_start_slot: int,
+    n_steps: int,
+) -> np.ndarray:
+    """
+    Model horizon'u n_steps'ten kücükse otoregresif tahmin yapar.
+    Her adimda modelin ciktisini bir sonraki adimin girisi olarak kullanir.
+    Döner: (n_steps, N) ham (raw) araç sayisi.
+    """
+    if n_steps == 0:
+        return np.zeros((0, NUM_NODES), dtype=np.float32)
+
+    collected: list[np.ndarray] = []
+    cur_window = window_norm.copy()
+    cur_slot = window_start_slot
+
+    while len(collected) < n_steps:
+        if _model_tod_enabled:
+            inp = _build_temporal_features(cur_window, cur_slot)
+        else:
+            inp = cur_window
+
+        raw_out = _run_forward(net, inp)           # (horizon_actual, N)
+        clipped = (
+            np.clip(raw_out, 0, None) if _model_outputs_raw
+            else np.clip(_denormalize(raw_out), 0, None)
+        )
+        needed = n_steps - len(collected)
+        take = min(raw_out.shape[0], needed)
+        for k in range(take):
+            collected.append(clipped[k])
+
+        # Pencereyi kaydır: tahmin edilen adımları normalize ederek ekle
+        for k in range(take):
+            norm_step = _normalize(clipped[k][np.newaxis])    # (1, N)
+            if cur_window.shape[0] > 1:
+                cur_window = np.vstack([cur_window[1:], norm_step])
+            else:
+                cur_window = norm_step
+            cur_slot = (cur_slot + 1) % SLOTS_PER_DAY
+
+    return np.vstack(collected)   # (n_steps, N)
+
+
 def _moving_average_predict(history: np.ndarray) -> np.ndarray:
     """Basit moving average + trend tahmini. history: (lag, NUM_NODES)"""
     if history.shape[0] >= 2:
@@ -650,13 +695,14 @@ def _predict_rolling_series_sync(
     completed_idx: int,
 ) -> Dict[int, Dict[str, List[float]]]:
     """
-    Seq2Seq gun-ici tahmin serisi — tek forward pass.
+    Tüm gün (144 slot) tahmin serisi.
 
-    Model son lag slotunu girdi olarak alir, Seq2Seq decoder
-    geri kalan tum gunu tek seferde uretiyor (horizon=144).
+    Geçmiş slotlar gerçek veriyle, gelecek slotlar _autoregress() ile üretilir
+    (model horizon=1 ise her adımda pencere kaydırılır, horizon>1 ise tek
+    forward pass birden fazla adım döner — karar _autoregress() içinde otomatik).
 
-    completed_idx: saat gun ilerledikce artar (0-143).
-    Gerçek veri [0..completed_idx], tahmin [completed_idx+1..143].
+    Tohum: günün başındaki ilk `lag` gerçek slot.
+    completed_idx: gün içinde artar (0-143).
     """
     lag = _model_lag if _model is not None else LAG
 
@@ -677,27 +723,39 @@ def _predict_rolling_series_sync(
 
     window_norm = _normalize(window)
 
-    if _model is not None:
-        if _model_tod_enabled:
-            model_input = _build_temporal_features(window_norm, window_start_slot)
-        else:
-            model_input = window_norm
-        # TEK forward pass → decoder tum 144 slotu model icinde uretiyor
-        model_out = _run_forward(_model, model_input)       # (144, N)
-        full_day = np.clip(model_out, 0, None) if _model_outputs_raw \
-                   else np.clip(_denormalize(model_out), 0, None)
-    else:
+    if _model is None:
         pred_norm = _moving_average_predict(window_norm)
         base = np.clip(_denormalize(pred_norm), 0, None)[0]
-        full_day = np.tile(base, (SLOTS_PER_DAY, 1))       # (144, N) sabit tahmin
+        result_series = np.tile(base, (SLOTS_PER_DAY, 1))  # (144, N)
 
-    # Gercek veri [0..completed_idx] + tahmin [completed_idx+1..143]
-    result_series = np.vstack([actual, full_day[n_actual:]])  # (144, N)
+    else:
+        # Geçmiş slotlar gerçek veriyle, gelecek slotlar autoregress ile üretilir
+        result_series = np.zeros((SLOTS_PER_DAY, NUM_NODES), dtype=np.float32)
+
+        # Geçmiş: her slot için o ana kadarki gerçek veri penceresini kullan
+        def _clip_pred(raw_out: np.ndarray) -> np.ndarray:
+            return (np.clip(raw_out, 0, None) if _model_outputs_raw
+                    else np.clip(_denormalize(raw_out), 0, None))
+
+        for s in range(n_actual):
+            if s < lag:
+                pad = np.zeros((lag - s, NUM_NODES), dtype=np.float32)
+                win = np.vstack([pad, actual[:s]]) if s > 0 else np.zeros((lag, NUM_NODES), dtype=np.float32)
+            else:
+                win = actual[s - lag:s]
+            raw_out = _run_forward(_model, _normalize(win))
+            result_series[s] = _clip_pred(raw_out)[0]
+
+        # Gelecek: son gerçek pencereden autoregress
+        n_future = SLOTS_PER_DAY - n_actual
+        if n_future > 0:
+            future_preds = _autoregress(_model, window_norm, window_start_slot, n_future)
+            result_series[n_actual:n_actual + n_future] = future_preds
 
     out: Dict[int, Dict[str, List[float]]] = {}
     for jid, arm_map in _node_map.items():
         out[jid] = {
-            arm: [float(result_series[s, node_idx]) for s in range(SLOTS_PER_DAY)]
+            arm: [float(result_series[s, node_idx]) for s in range(result_series.shape[0])]
             for arm, node_idx in arm_map.items()
         }
     return out
@@ -727,11 +785,8 @@ def _predict_full_day_sync(
     seed_completed_idx: int = 143,
 ) -> Dict[int, Dict[str, List[float]]]:
     """
-    Seq2Seq gun-oncesi tahmin — TEK model forward pass.
-
-    Garnoldi encoder'i son lag slotunu okuyor, Seq2Seq GRU decoder
-    144 slotun tamamini tek seferde model icinde uretiyor.
-    Dis dongü yok — algoritmanin kendisi yapiyor.
+    Gün-öncesi tahmin — bir önceki günün verisiyle yarının 144 slotunu tahmin eder.
+    144 ayrı forward pass, her seferinde pencere kaydırılır (_autoregress()).
 
     seed_data_by_junction: Bir onceki gunun gercek verisi (belediye API formati)
     seed_completed_idx:    Tohum verideki son gecerli slot (genellikle 143 = 23:50)
@@ -761,10 +816,7 @@ def _predict_full_day_sync(
         model_input = window_norm
 
     if _model is not None:
-        # TEK forward pass → Seq2Seq decoder 144 adimi model icinde uretiyor
-        model_out = _run_forward(_model, model_input)       # (horizon=144, N)
-        predicted = np.clip(model_out, 0, None) if _model_outputs_raw \
-                    else np.clip(_denormalize(model_out), 0, None)
+        predicted = _autoregress(_model, window_norm, window_start_slot, SLOTS_PER_DAY)
     else:
         # Fallback: hareketli ortalama tabanlı gun pattern'i
         base = np.clip(_denormalize(_moving_average_predict(window_norm)), 0, None)[0]
@@ -777,11 +829,10 @@ def _predict_full_day_sync(
         ], dtype=np.float32)
         predicted = np.outer(peak, base)                    # (144, N)
 
-    n_slots = predicted.shape[0]
     out: Dict[int, Dict[str, List[float]]] = {}
     for jid, arm_map in _node_map.items():
         out[jid] = {
-            arm: [float(predicted[s, node_idx]) for s in range(n_slots)]
+            arm: [float(predicted[s, node_idx]) for s in range(predicted.shape[0])]
             for arm, node_idx in arm_map.items()
         }
     return out

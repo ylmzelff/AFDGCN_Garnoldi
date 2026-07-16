@@ -11,13 +11,13 @@ DEBUG = 'True'
 #DATASET = 'PEMS04'
 #DATASET = 'PEMS08'
 #DATASET = 'Konya'
-DATASET = 'Kayseri'
 #DATASET = 'Kayseri'
+DATASET = 'Sivas'
 DEVICE = 'cuda:0'
 #DEVICE = 'cpu'
 MODEL = 'AFDGCN'
-#GRAPH = "/content/AFDGCN_Garnoldi/data/Sivas/directed_graph_edges.csv"
-GRAPH = "/content/AFDGCN_Garnoldi/data/Kayseri/directed_graph_edges.csv"
+GRAPH = os.path.join(_BASE, "data", "Sivas", "directed_sivas.csv")
+#GRAPH = "/content/AFDGCN_Garnoldi/data/Kayseri/directed_graph_edges.csv"
 #GRAPH = "/content/AFDGCN_Garnoldi/data/Kayseri/graph_ildem.csv"
 #GRAPH = "/content/AFDGCN_Garnoldi/data/Konya/konya_kavşaklar.csv"
 #GRAPH = "/content/AFDGCN_Garnoldi/data/Kcetas/conn_graph.csv"
@@ -69,7 +69,6 @@ args.add_argument('--early_stop', default=config['train']['early_stop'], type=ev
 args.add_argument('--early_stop_patience', default=config['train']['early_stop_patience'], type=int)
 args.add_argument('--grad_norm', default=config['train']['grad_norm'], type=eval)
 args.add_argument('--max_grad_norm', default=config['train']['max_grad_norm'], type=int)
-args.add_argument('--teacher_forcing', default=False, type=bool)
 args.add_argument('--real_value', default=config['train']['real_value'], type=eval)
 # 6. test
 args.add_argument('--mae_thresh', default=config['test']['mae_thresh'], type=eval)

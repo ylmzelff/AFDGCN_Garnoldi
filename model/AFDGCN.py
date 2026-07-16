@@ -1179,8 +1179,8 @@ class GPR_prop(MessagePassing):
 class GPRGNN(torch.nn.Module):
     def __init__(self, num_node, input_dim, output_dim, hidden, cheb_k, num_layers, embed_dim):
         super(GPRGNN, self).__init__()
-        self.lin1 = Linear(2176, 64)  # (hidden_dim*num_nodes, hidden_dim) 19, 1
-        self.lin2 = Linear(64, 2176)
+        self.lin1 = Linear(1024, 64)  # (hidden_dim*num_nodes, hidden_dim) 19, 1
+        self.lin2 = Linear(64, 1024)
 
         self.prop1 = GPR_prop(cheb_k, 0.5, 'PPR', None)
 
@@ -1213,7 +1213,7 @@ class GPRGNN(torch.nn.Module):
             x = F.dropout(x, p=self.dprate, training=self.training)
             x = self.prop1(x, edge_index)
             x = x.transpose(0, 1)
-            x = x.view(x.size(0), 1, 34, 64)
+            x = x.view(x.size(0), 1, 16, 64)
             x = F.log_softmax(x, dim=3)
             return x
 
@@ -1321,8 +1321,8 @@ class APPNP(MessagePassing):
 class APPNP_Net(torch.nn.Module):
     def __init__(self, num_node, input_dim, output_dim, hidden, cheb_k, num_layers, embed_dim):
         super(APPNP_Net, self).__init__()
-        self.lin1 = Linear(2176, 64)  # (512, 64) for Konya & (1216,64) for Kcetas
-        self.lin2 = Linear(64, 2176)
+        self.lin1 = Linear(1024, 64)  # (512, 64) for Konya & (1216,64) for Kcetas
+        self.lin2 = Linear(64, 1024)
         self.prop1 = APPNP(cheb_k, 0.5, 0.2, False, True, True)
         self.dropout = 0.2
         self.num_layers = num_layers
@@ -1361,7 +1361,7 @@ class APPNP_Net(torch.nn.Module):
         x = x.transpose(0, 1)
         # Reshape it from (5, 1216) to (5, 1, 19, 64) for Kcetas
         # (5, 1, 8, 64) for Konya
-        x = x.reshape(x.size(0), 1, 34, 64)  # Manually reshape to (5, 1, 19, 64)
+        x = x.reshape(x.size(0), 1, 16, 64)  # Manually reshape to (5, 1, 19, 64)
         # print("After reshaping, x size:", x.size())
 
         # Apply log softmax along the appropriate dimension
@@ -1405,108 +1405,23 @@ def read_edge_list_csv(device=None):
 
 
 
-class Seq2SeqGRUDecoder(nn.Module):
-    """
-    Seq2Seq GRU Decoder — Garnoldi encoder'inin gizli durumundan
-    ileri yonlu cok-adimli tahmin uretir.
-
-    Tum horizon adimlari TEK forward pass'ta model icinde uretilir.
-    Dis dongü veya sarmalayici gerekmez.
-
-    Adim basina:
-      1. Dikkat (attention): encoder ciktilarinin hangisine odaklanacagini ogret
-      2. GRU hücresi: baginlami ve onceki tahmini isle
-      3. Projeksiyon: gizli durum → araç sayisi tahmini
-    """
-    def __init__(self, hidden_dim: int, output_dim: int, num_node: int, horizon: int):
-        super().__init__()
-        self.horizon   = horizon
-        self.num_node  = num_node
-        self.hidden_dim = hidden_dim
-        self.output_dim = output_dim
-
-        # Encoder ciktilari uzerinde dikkat mekanizmasi
-        # Sorgu: mevcut decoder gizli durumu; Anahtar/Deger: encoder ciktilari
-        self.attn = nn.Linear(hidden_dim * 2, 1)
-
-        # GRU hucresi: girdi = [onceki_tahmin | bagiam_vektoru]
-        self.gru_cell = nn.GRUCell(output_dim + hidden_dim, hidden_dim)
-
-        # Gizli durumdan araç sayisina projeksiyon
-        self.proj = nn.Linear(hidden_dim, output_dim)
-
-    def forward(
-        self,
-        encoder_outputs: torch.Tensor,        # (B, T, N, H)
-        last_hidden:     torch.Tensor,        # (B, N, H) — encoder son adim ciktisi
-        target:          torch.Tensor | None = None,  # (B, horizon, N, D) ogretmen zorlama
-        teacher_forcing_ratio: float = 0.0,
-    ) -> torch.Tensor:
-        """
-        Dondurulen sekil: (B, horizon, N, 1)
-        Dis dongü YOK — tüm horizon adimlari bu fonksiyon icinde uretilir.
-        """
-        B, T, N, H = encoder_outputs.shape
-
-        # Node boyutunu batch'e karistir: (B*N, ...)
-        h   = last_hidden.reshape(B * N, H)
-        enc = encoder_outputs.permute(0, 2, 1, 3).reshape(B * N, T, H)  # (B*N, T, H)
-
-        # Baslangic decoder girdisi: sifir vektoru
-        x = torch.zeros(B * N, self.output_dim, device=h.device, dtype=h.dtype)
-
-        preds = []
-        for step in range(self.horizon):
-            # ── 1. Dikkat ─────────────────────────────────────────
-            h_exp   = h.unsqueeze(1).expand(-1, T, -1)                      # (B*N, T, H)
-            scores  = self.attn(torch.cat([enc, h_exp], dim=-1)).squeeze(-1) # (B*N, T)
-            weights = torch.softmax(scores, dim=-1)
-            context = (weights.unsqueeze(-1) * enc).sum(dim=1)              # (B*N, H)
-
-            # ── 2. GRU adimi ──────────────────────────────────────
-            gru_in = torch.cat([x, context], dim=-1)   # (B*N, output_dim + H)
-            h      = self.gru_cell(gru_in, h)           # (B*N, H)
-
-            # ── 3. Projeksiyon ────────────────────────────────────
-            out = self.proj(h)                           # (B*N, output_dim)
-            preds.append(out.reshape(B, N, self.output_dim))
-
-            # Ogretmen zorlama: egitimde gercek degeri kullan, cikarimda tahmin kullan
-            if target is not None and torch.rand(1).item() < teacher_forcing_ratio:
-                x = target[:, step, :, :output_dim].reshape(B * N, self.output_dim)
-            else:
-                x = out
-
-        return torch.stack(preds, dim=1)  # (B, horizon, N, output_dim)
-
-
 class Model(nn.Module):
-    def __init__(self, num_node, input_dim, hidden_dim, output_dim, embed_dim,
-                 cheb_k, horizon, num_layers, heads, timesteps, A, kernel_size,
-                 use_seq2seq: bool = False):
+    def __init__(self, num_node, input_dim, hidden_dim, output_dim, embed_dim, cheb_k, horizon, num_layers, heads, timesteps, A, kernel_size):
         super(Model, self).__init__()
-        self.A          = A
-        self.timesteps  = timesteps
-        self.num_node   = num_node
-        self.input_dim  = input_dim
+        self.A = A
+        self.timesteps = timesteps
+        self.num_node = num_node
+        self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
-        self.embed_dim  = embed_dim
-        self.horizon    = horizon
+        self.embed_dim = embed_dim
+        self.horizon = horizon
         self.num_layers = num_layers
-        self.use_seq2seq = use_seq2seq
 
-        # ── Node gömme ────────────────────────────────────────────
-        self.node_embedding = nn.Parameter(
-            torch.randn(self.num_node, embed_dim), requires_grad=True
-        )
-
-        # ── Özellik dikkati (feature attention) ──────────────────
-        self.feature_attention = feature_attention(
-            input_dim=input_dim, output_dim=hidden_dim, kernel_size=kernel_size
-        )
-
-        # ── Encoder (AVWDCRNN / APPNP / GPRGNN) ──────────────────
+        # node embed
+        self.node_embedding = nn.Parameter(torch.randn(self.num_node, embed_dim), requires_grad=True)
+        # encoder
+        self.feature_attention = feature_attention(input_dim=input_dim, output_dim=hidden_dim, kernel_size=kernel_size)
         if ALGO in ['Garnoldi', 'default']:
             self.encoder = AVWDCRNN(num_node, hidden_dim, hidden_dim, cheb_k, embed_dim, num_layers)
         else:
@@ -1514,48 +1429,30 @@ class Model(nn.Module):
                 self.encoder = APPNP_Net(num_node, input_dim, output_dim, hidden_dim, cheb_k, num_layers, embed_dim)
             elif ALGO == 'GPRGNN':
                 self.encoder = GPRGNN(num_node, input_dim, output_dim, hidden_dim, cheb_k, num_layers, embed_dim)
+        self.GraphAttentionLayer = GraphAttentionLayer(hidden_dim, hidden_dim, A, dropout=0.5, alpha=0.2, concat=True)
+        self.MultiHeadAttention = MultiHeadAttention(embed_size=hidden_dim, heads=heads, timesteps=timesteps)
+        # predict
+        self.nconv = nn.Conv2d(1, self.horizon, kernel_size=(1, 1), bias=True)
+        self.end_conv = nn.Conv2d(hidden_dim, 1, kernel_size=(1, 1), bias=True)
 
-        if use_seq2seq:
-            # ── Seq2Seq GRU Decoder ───────────────────────────────
-            # Encoder'in gizli durumundan tum horizon adimlarini uretir.
-            # Dis dongü gerekmez — algoritmanin kendisi yapar.
-            self.decoder = Seq2SeqGRUDecoder(hidden_dim, output_dim, num_node, horizon)
-        else:
-            # ── Orijinal direkt cok-adimli cikis yolu ────────────
-            self.GraphAttentionLayer = GraphAttentionLayer(
-                hidden_dim, hidden_dim, A, dropout=0.5, alpha=0.2, concat=True
-            )
-            self.MultiHeadAttention = MultiHeadAttention(
-                embed_size=hidden_dim, heads=heads, timesteps=timesteps
-            )
-            self.nconv    = nn.Conv2d(1, self.horizon, kernel_size=(1, 1), bias=True)
-            self.end_conv = nn.Conv2d(hidden_dim, 1,   kernel_size=(1, 1), bias=True)
-
-    def forward(self, x, target=None, teacher_forcing_ratio=0.0):
+    def forward(self, x):
         # x: (B, T, N, D)
         batch_size = x.shape[0]
-        x = self.feature_attention(x)          # (B, T, N, hidden_dim)
-
+        x = self.feature_attention(x)
         init_state = self.encoder.init_hidden(batch_size)
         if ALGO in ['Garnoldi', 'default']:
+            init_state = self.encoder.init_hidden(batch_size)
             output, _ = self.encoder(x, init_state, self.node_embedding)
         else:
             output = self.encoder(x)
-        # output: (B, T, N, hidden_dim)
 
-        if self.use_seq2seq:
-            # Encoder son adim ciktisi → decoder baslangic gizli durumu
-            last_hidden = output[:, -1, :, :]                            # (B, N, H)
-            out = self.decoder(output, last_hidden, target, teacher_forcing_ratio)
-            # out: (B, horizon, N, output_dim=1)
-            return out.squeeze(-1)                                        # (B, horizon, N)
-        else:
-            # Orijinal direkt cok-adimli yol
-            state = output[:, -1:, :, :]
-            state = self.nconv(state)
-            SAtt  = self.GraphAttentionLayer(state)
-            TAtt  = self.MultiHeadAttention(output).permute(0, 2, 1, 3)
-            out   = SAtt + TAtt
-            out   = self.end_conv(out.permute(0, 3, 2, 1))
-            out   = out.permute(0, 3, 2, 1)                              # (B, horizon, N)
-            return out
+        #output, _ = self.encoder(x, init_state, self.node_embedding)  # (B, T, N, hidden_dim)
+        #output = self.encoder(x)
+        state = output[:, -1:, :, :]
+        state = self.nconv(state)
+        SAtt = self.GraphAttentionLayer(state)
+        TAtt = self.MultiHeadAttention(output).permute(0, 2, 1, 3)
+        out = SAtt + TAtt
+        out = self.end_conv(out.permute(0, 3, 2, 1))  # [B, 1, N, T] -> [B, N, T]
+        out = out.permute(0, 3, 2, 1)   # [B, T, N]
+        return out

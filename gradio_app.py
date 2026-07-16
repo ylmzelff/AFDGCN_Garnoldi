@@ -509,6 +509,22 @@ def datetime_to_minutes(dt):
     # Tam tarih-saat sıralaması için timestamp kullan
     return dt.timestamp()
 
+def _parse_tarifsaat(tarih_col, saat_col):
+    """Tarih+Saat kolonlarını birleştirip Timestamp'e çevirir. %d.%m.%Y ve ISO formatlarını destekler."""
+    combined = tarih_col.astype(str).str.strip() + " " + saat_col.astype(str).str.strip()
+    # Önce DD.MM.YYYY HH:MM dene
+    result = pd.to_datetime(combined, format="%d.%m.%Y %H:%M", errors="coerce")
+    # Başarısız olanlar için YYYY-MM-DD HH:MM (ISO) dene
+    mask_nat = result.isna()
+    if mask_nat.any():
+        result[mask_nat] = pd.to_datetime(combined[mask_nat], format="%Y-%m-%d %H:%M", errors="coerce")
+    # Hâlâ NaT kalanlar için genel parse (Tarih sütunu datetime obje olabilir)
+    mask_nat2 = result.isna()
+    if mask_nat2.any():
+        result[mask_nat2] = pd.to_datetime(combined[mask_nat2], dayfirst=True, errors="coerce")
+    return result
+
+
 def preprocess_excel_and_generate_npz_ui(excel_file):
     try:
         if excel_file is None:
@@ -524,7 +540,7 @@ def preprocess_excel_and_generate_npz_ui(excel_file):
             header_idx = mask.idxmax() if mask.any() else 0
 
             df = pd.read_excel(xls, sheet_name=sheet, header=header_idx)
-            df["TarihSaat"] = pd.to_datetime(df["Tarih"].astype(str) + " " + df["Saat"].astype(str), format="%d.%m.%Y %H:%M", errors="coerce")
+            df["TarihSaat"] = _parse_tarifsaat(df["Tarih"], df["Saat"])
             all_datetimes.extend(df["TarihSaat"].dropna().unique())
 
         unique_datetimes = sorted(set(all_datetimes), key=lambda x: datetime_to_minutes(x))
@@ -553,7 +569,7 @@ def preprocess_excel_and_generate_npz_ui(excel_file):
             if df_numeric.empty:
                 continue
 
-            df["TarihSaat"] = pd.to_datetime(df["Tarih"].astype(str) + " " + df["Saat"].astype(str), format="%d.%m.%Y %H:%M", errors="coerce")
+            df["TarihSaat"] = _parse_tarifsaat(df["Tarih"], df["Saat"])
 
             rows = []
             for _, row in df.iterrows():

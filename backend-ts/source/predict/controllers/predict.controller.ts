@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express'
-import { realTimePredictor, kayseriClient, pythonModel } from '../services'
+import { realTimePredictor, kayseriClient, sivasClient, pythonModel, clients } from '../services'
 import { REGION_CONFIG } from '../services/real-time-predictor.service'
 import { logPrediction } from '../../common/services/db-logger.service'
 
@@ -87,12 +87,12 @@ export const getPredictionStatus = async (_req: Request, res: Response): Promise
   try {
     const cacheStatus = await realTimePredictor.getCacheStatus()
     const modelStatus = await pythonModel.getModelStatus()
-    const apiStatus = kayseriClient.getStatus()
 
     res.json({
       cache: cacheStatus,
       model: modelStatus,
-      kayseri_api: apiStatus,
+      kayseri_api: kayseriClient.getStatus(),
+      sivas_api: sivasClient.getStatus(),
     })
   } catch (err) {
     res.error(err)
@@ -107,6 +107,7 @@ export const listRegions = (_req: Request, res: Response): void => {
     junction_count: config.junctionIds.length,
     junction_ids: config.junctionIds,
     use_model: config.useModel,
+    slot_minutes: clients[config.city]?.getSlotMinutes() ?? 10,
   }))
   res.json({ regions })
 }

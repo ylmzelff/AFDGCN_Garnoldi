@@ -12,6 +12,7 @@ import axios, { type AxiosInstance } from 'axios'
 import https from 'https'
 import { env } from '../../common/config'
 import { REGION_CONFIG } from './real-time-predictor.service'
+import type { TrafficClient, ArmData } from './traffic-client.interface'
 
 /** "HH:MM" -> 10 dakikalik dilim indeksi (0..143) */
 function timeToSlotIndex(hhmm: string): number {
@@ -21,7 +22,7 @@ function timeToSlotIndex(hhmm: string): number {
   return h * 6 + Math.floor(m / 10)
 }
 
-export type ArmData = Record<string, string | number>
+export type { ArmData }
 
 // -----------------------------------------------------------------------------
 // AusTKM API Tipleri
@@ -46,7 +47,7 @@ interface AusTkmSensorItem {
 // Servis
 // -----------------------------------------------------------------------------
 
-export class KayseriClientService {
+export class KayseriClientService implements TrafficClient {
   private readonly baseUrl: string
   private readonly token: string
   private readonly http: AxiosInstance
@@ -185,6 +186,11 @@ export class KayseriClientService {
 
   getBaseUrl(): string {
     return this.baseUrl
+  }
+
+  /** AusTKM verisi 10 dakikalık dilimler halinde gelir (günde 144 slot). */
+  getSlotMinutes(): number {
+    return 10
   }
 
   /** Legacy uyumluluk - artık no-op */

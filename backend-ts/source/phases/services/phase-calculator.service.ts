@@ -187,25 +187,28 @@ export class PhaseCalculatorService {
   // Faz Serisi — tahmin edilen araç sayıları → her 10 dk'lık slot için faz
   // ─────────────────────────────────────────────────────────────────────────
 
-  private slotToLabel(slot: number): string {
-    const hh = Math.floor(slot / 6)
-    const mm = (slot % 6) * 10
+  private slotToLabel(slot: number, slotMinutes: number = 10): string {
+    const totalMinutes = slot * slotMinutes
+    const hh = Math.floor(totalMinutes / 60)
+    const mm = totalMinutes % 60
     return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
   }
 
   /**
-   * Her 10 dakikalık slot için tahmin edilen araç sayılarını Webster faz
-   * hesaplayıcısına besler ve her slot × kavşak için faz önerisi döner.
+   * Her slot için tahmin edilen araç sayılarını Webster faz hesaplayıcısına
+   * besler ve her slot × kavşak için faz önerisi döner.
    *
    * @param predictionSeries  junctionId → kol → [slot0_araç, slot1_araç, …]
    * @param region            Bölge adı (şerit konfigürasyonu için)
    * @param armNames          Opsiyonel kol görüntü adları (kavşak → kol → isim)
+   * @param slotMinutes       Her slot'un dakika uzunluğu (Kayseri: 10, Sivas: 60)
    * @returns                 junctionId → [PhaseSeriesItem per slot]
    */
   computePhaseSeries(
     predictionSeries: Record<number, Record<string, number[]>>,
     region: string = 'ildem',
     armNames: Record<number, Record<string, string>> = {},
+    slotMinutes: number = 10,
   ): Record<number, PhaseSeriesItem[]> {
     const result: Record<number, PhaseSeriesItem[]> = {}
 
@@ -248,7 +251,7 @@ export class PhaseCalculatorService {
 
         slots.push({
           slot_index: i,
-          time_label: this.slotToLabel(i),
+          time_label: this.slotToLabel(i, slotMinutes),
           cycle_time: cycleTime,
           total_vehicles: totalVehicles,
           arms,

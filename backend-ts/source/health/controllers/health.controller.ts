@@ -1,10 +1,11 @@
 import type { Request, Response } from 'express'
-import { kayseriClient, pythonModel } from '../../predict/services'
+import { kayseriClient, sivasClient, pythonModel } from '../../predict/services'
 import { websocketService } from '../../common/services/websocket.service'
 import { env } from '../../common/config'
 
 export const getHealth = async (_req: Request, res: Response): Promise<void> => {
   const kayseriOk = await kayseriClient.healthCheck()
+  const sivasOk = await sivasClient.healthCheck()
   const modelStatus = await pythonModel.getModelStatus()
 
   res.json({
@@ -13,6 +14,7 @@ export const getHealth = async (_req: Request, res: Response): Promise<void> => 
     version: env.apiVersion,
     model: modelStatus,
     kayseri_api: kayseriOk ? 'connected' : 'unavailable',
+    sivas_api: sivasOk ? 'connected' : 'unavailable',
     ws_clients: websocketService.clientCount,
   })
 }

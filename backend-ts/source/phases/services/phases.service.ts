@@ -5,7 +5,7 @@
  * Python phases.py mantığının TypeScript karşılığı.
  */
 
-import type { KayseriClientService } from '../../predict/services/kayseri-client.service'
+import type { TrafficClient } from '../../predict/services/traffic-client.interface'
 import type { PythonModelService } from '../../predict/services/python-model.service'
 import type { PhaseCalculatorService } from './phase-calculator.service'
 import { JUNCTION_NAMES, ARM_DISPLAY_NAMES } from './phase-calculator.service'
@@ -22,14 +22,14 @@ const ARM_NAMES = ARM_DISPLAY_NAMES
 // Yardımcı Fonksiyonlar
 // ─────────────────────────────────────────────────────────────────────────────
 
-function minuteIndexNow(): number {
+function minuteIndexNow(slotMinutes: number): number {
   const now = new Date()
-  return now.getHours() * 6 + Math.floor(now.getMinutes() / 10)
+  return now.getHours() * (60 / slotMinutes) + Math.floor(now.getMinutes() / slotMinutes)
 }
 
-function timeLabelNow(): string {
+function timeLabelNow(slotMinutes: number): string {
   const now = new Date()
-  const slotMinute = Math.floor(now.getMinutes() / 10) * 10
+  const slotMinute = Math.floor(now.getMinutes() / slotMinutes) * slotMinutes
   return `${String(now.getHours()).padStart(2, '0')}:${String(slotMinute).padStart(2, '0')}`
 }
 
@@ -39,10 +39,16 @@ function timeLabelNow(): string {
 
 export class PhasesService {
   constructor(
-    private readonly kayseriClient: KayseriClientService,
+    private readonly clients: Record<string, TrafficClient>,
     private readonly pythonModel: PythonModelService,
     private readonly calculator: PhaseCalculatorService,
   ) {}
+
+  private clientFor(city: string): TrafficClient {
+    const client = this.clients[city]
+    if (!client) throw new Error(`[phases] '${city}' için tanımlı veri istemcisi yok.`)
+    return client
+  }
 
   /**
    * Geri dönük MA tahmini: her slot için yalnızca geçmiş slotlar kullanılır.
@@ -154,14 +160,16 @@ export class PhasesService {
     const config = REGION_CONFIG[region]
     if (!config) throw new Error(`Bilinmeyen bölge: ${region}`)
 
-    const minuteIdx = minuteIndexNow()
+    const client = this.clientFor(config.city)
+    const slotMinutes = client.getSlotMinutes()
+    const minuteIdx = minuteIndexNow(slotMinutes)
     let kayseriOk = true
     let dataByJunction: Record<number, Array<Record<string, string | number>>> | null = null
 
     try {
-      dataByJunction = await this.kayseriClient.fetchRegion(region)
+      dataByJunction = await client.fetchRegion(region)
     } catch (err) {
-      console.warn(`[phases] Kayseri API ulaşılamıyor (${region}):`, err)
+      console.warn(`[phases] '${config.city}' API ulaşılamıyor (${region}):`, err)
       kayseriOk = false
     }
 
@@ -202,14 +210,14 @@ export class PhasesService {
         predictionSeries = this.buildFallbackPredictionSeries(dataByJunction, completedIdx)
       }
 
-      phaseSeries = this.calculator.computePhaseSeries(predictionSeries, region, ARM_NAMES)
+      phaseSeries = this.calculator.computePhaseSeries(predictionSeries, region, ARM_NAMES, slotMinutes)
     }
 
     return {
       region,
       city: config.city,
       timestamp: new Date().toISOString(),
-      timeLabel: timeLabelNow(),
+      timeLabel: timeLabelNow(slotMinutes),
       predictionSource,
       kayseriApiStatus: kayseriOk ? 'connected' : 'unavailable',
       junctions,

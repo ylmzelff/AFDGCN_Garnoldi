@@ -48,14 +48,11 @@ class Engine(object):
         total_rmse = 0
         total_mape = 0
         for batch_idx, (data, target) in enumerate(self.train_loader):
-            # data: (B, T, N, D) — tüm özellikler (flow + temporal features)
-            # label: (B, horizon, N, 1) — yalnizca tahmin edilen flow
-            label = target[..., :1].to(data.device)
+            # data:  (B, T, N, D)      — flow + temporal features
+            # label: (B, horizon, N)   — sadece flow, model ciktisiyla ayni sekil
+            label = target[..., 0].to(data.device)
             self.optimizer.zero_grad()
-            # Ogretmen zorlama: ilk epoch'larda gercek degerleri kullan,
-            # sonra giderek azalt ki model bagimsiz tahmin yapmayı ogrensin
-            tf_ratio = max(0.0, 0.5 - (self.current_epoch - 1) * 0.005)
-            output = self.model(data, target=label, teacher_forcing_ratio=tf_ratio)
+            output = self.model(data)
             output = output.to(label.device)
             if self.args.real_value:
                 output = self.scaler.inverse_transform(output)
@@ -99,7 +96,7 @@ class Engine(object):
         results = { 'Output': []}
         with torch.no_grad():
             for batch_idx, (data, target) in enumerate(val_dataloader):
-                label = target[..., :1].to(data.device)
+                label = target[..., 0].to(data.device)
                 output = self.model(data)  # val/test: ogretmen zorlama yok
                 y_true.append(label)
                 y_pred.append(output)
@@ -202,6 +199,8 @@ class Engine(object):
                 # Model meta-verisi: inference sirasinda dogru input_dim ve tod bilgisi
                 checkpoint['input_dim'] = getattr(self.args, 'input_dim', 1)
                 checkpoint['tod_enabled'] = getattr(self.args, 'tod', False)
+                # Model her zaman normalized deger uretir; real_value sadece loss hesabini etkiler
+                best_model['real_value_output'] = False
                 torch.save(checkpoint, self.best_path)
 
         with open('mae_values.csv', 'w', newline='') as csvfile:
@@ -218,8 +217,9 @@ class Engine(object):
         # save the best model to file
         self.logger.info("Saving current best model to " + self.best_path)
 
-        # test
-        self.model.load_state_dict(best_model)
+        # test (real_value_output metadata anahtarini cikar, load_state_dict bunu kabul etmez)
+        weights_only = {k: v for k, v in best_model.items() if k != 'real_value_output'}
+        self.model.load_state_dict(weights_only)
         self.test(self.model, self.args, self.test_loader, self.scaler, self.logger)
 
 
@@ -253,7 +253,7 @@ class Engine(object):
         with torch.no_grad():
             for batch_idx, (data, target) in enumerate(data_loader):
                 data = data.to(args.device)
-                label = target[..., :1].to(args.device)
+                label = target[..., 0].to(args.device)
                 output = model(data)
                 #results['Input'].extend(data.cpu().numpy())
                 real_flow['Target'].extend(label.cpu().numpy())

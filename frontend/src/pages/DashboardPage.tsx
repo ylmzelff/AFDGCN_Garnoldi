@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LogOut, RefreshCw, TrafficCone, Zap, ChevronRight, Activity, Wifi, WifiOff, Brain, BarChart2, CalendarDays, TrendingUp } from 'lucide-react';
+import { LogOut, RefreshCw, TrafficCone, Zap, ChevronRight, Activity, Wifi, WifiOff, Brain, BarChart2 } from 'lucide-react';
 import { useAuthStore } from '@/store/useAuthStore';
 import { usePhaseStore } from '@/store/usePhaseStore';
 import { useWebSocket } from '@/hooks/useWebSocket';
@@ -9,7 +9,7 @@ import { junctionName, junctionArms } from '@/config/junctionMeta';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer,
-  PieChart, Pie, Cell, ReferenceLine,
+  PieChart, Pie, Cell,
 } from 'recharts';
 import { Fragment } from 'react';
 
@@ -29,6 +29,8 @@ interface RegionDef {
   city: string;
   description: string;
   useModel: boolean;
+  /** Bu bölgenin veri kaynağının doğal zaman dilimi (dakika) — Kayseri: 10, Sivas: 60 */
+  slotMinutes: number;
   junctions: JunctionDef[];
 }
 
@@ -40,16 +42,7 @@ interface JunctionLive {
   load: LoadLevel;
 }
 
-// isFuture=true olan noktalar gercek verinin otesine uzanan tahminlerdir
-interface ChartPoint { time: string; real: number | null; predicted: number | null; isFuture?: boolean }
-interface DayAheadPoint { time: string; predicted: number }
-interface DayAheadData {
-  date: string
-  source: string
-  points: DayAheadPoint[]
-  peakSlot: string
-  peakValue: number
-}
+interface ChartPoint { time: string; real: number | null; predicted: number | null }
 
 interface PhaseArm {
   arm: string; name: string; vehicle_count: number;
@@ -91,21 +84,12 @@ export default function DashboardPage() {
   const [regionOpen, setRegionOpen] = useState(true);
   const [junctionOpen, setJunctionOpen] = useState(true);
 
-  // Gün öncesi tahmin state'leri
-  const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
-  const [dayAheadDate, setDayAheadDate] = useState(tomorrow);
-  const [dayAheadData, setDayAheadData] = useState<DayAheadData | null>(null);
-  const [dayAheadLoading, setDayAheadLoading] = useState(false);
-  const [dayAheadError, setDayAheadError] = useState<string | null>(null);
-  // Grafik üzerinde "şu anki zaman" etiketi için
-  const [nowLabel, setNowLabel] = useState<string>('');
-
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Bölge listesini API'den yükle
   useEffect(() => {
     apiClient.get('/predict/regions').then((res) => {
-      type ApiRegion = { name: string; city: string; description: string; junction_ids: number[]; use_model: boolean };
+      type ApiRegion = { name: string; city: string; description: string; junction_ids: number[]; use_model: boolean; slot_minutes?: number };
       const data: ApiRegion[] = res.data?.regions ?? [];
       const built = data.map((r): RegionDef => ({
         name: r.name,
@@ -113,10 +97,11 @@ export default function DashboardPage() {
         city: r.city,
         description: r.description ?? `${r.junction_ids.length} kavşak`,
         useModel: r.use_model,
+        slotMinutes: r.slot_minutes ?? 10,
         junctions: r.junction_ids.map((id) => ({
           id,
-          name: junctionName(id),
-          arms: junctionArms(id),
+          name: junctionName(r.city, id),
+          arms: junctionArms(r.city, id),
         })),
       }));
       setRegions(built);
@@ -150,25 +135,27 @@ export default function DashboardPage() {
     finally { setLiveLoading(false); }
   }, [selectedRegion?.name]);
 
-  // Sayfa açılınca 1 kez + her 10 dakikalık slot sınırında yenile (:00, :10, :20, ...)
+  // Sayfa açılınca 1 kez + bölgenin doğal slot sınırında yenile (Kayseri: 10dk, Sivas: 1sa)
   useEffect(() => {
     if (!selectedRegion) return;
+    const slotMinutes = selectedRegion.slotMinutes;
+    const slotMs = slotMinutes * 60_000;
     setLiveLoading(true);
     fetchLiveData();
 
     // Bir sonraki slot sınırına kaç ms kaldığını hesapla
     const msUntilNextSlot = () => {
       const now = new Date();
-      const msLeft = ((10 - (now.getMinutes() % 10)) % 10) * 60_000
+      const msLeft = ((slotMinutes - (now.getMinutes() % slotMinutes)) % slotMinutes) * 60_000
         - now.getSeconds() * 1000
         - now.getMilliseconds();
-      return msLeft <= 0 ? 600_000 : msLeft;
+      return msLeft <= 0 ? slotMs : msLeft;
     };
 
     let intervalId: ReturnType<typeof setInterval> | null = null;
     const timeoutId = setTimeout(() => {
-      fetchLiveData();                                    // slot sınırında hemen güncelle
-      intervalId = setInterval(fetchLiveData, 600_000);  // sonra her 10 dakikada
+      fetchLiveData();                              // slot sınırında hemen güncelle
+      intervalId = setInterval(fetchLiveData, slotMs); // sonra her slot'ta bir
     }, msUntilNextSlot());
 
     return () => {
@@ -188,11 +175,13 @@ export default function DashboardPage() {
       const predicted = data.predictions?.[junctionId]?.[arm] ?? null;
       setSource(data.source ?? '');
       setKayseriOk(data.kayseri_ok ?? null);
+      const slotMinutes: number = data.slot_minutes ?? selectedRegion?.slotMinutes ?? 10;
 
-      // slot index → "HH:MM" (10 dk dilim)
+      // slot index → "HH:MM" (bölgenin doğal dilim uzunluğuna göre)
       const slotToTime = (slotIdx: number) => {
-        const hh = Math.floor(slotIdx / 6);
-        const mm = (slotIdx % 6) * 10;
+        const totalMinutes = slotIdx * slotMinutes;
+        const hh = Math.floor(totalMinutes / 60);
+        const mm = totalMinutes % 60;
         return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
       };
 
@@ -210,69 +199,30 @@ export default function DashboardPage() {
         const trimmedPred = predSeries.slice(firstNonZero);
         const trimStart = startSlot + firstNonZero;
 
-        // ── Geçmiş noktalar: gerçek veri + model tahmini ──────────────
         const points: ChartPoint[] = trimmed.map((val, i) => ({
           time: slotToTime(trimStart + i),
           real: Math.round(val),
           predicted: trimmedPred[i] !== undefined ? Math.round(trimmedPred[i]) : null,
-          isFuture: false,
         }));
-
-        // ── İleri noktalar: gerçek veri bitti, sadece tahmin var ───────
-        // predSeries (prediction_series) artık 144 slot dönüyor.
-        // Gerçek verinin bittiği yerden 23:50'ye kadar tahmini göster.
-        const realEndIdx = startSlot + series.length;   // ilk tahmin-only slot indeksi
-        const totalSlots = Math.max(predSeries.length, 144);
-        for (let i = series.length; i < totalSlots; i++) {
-          const slotIdx = startSlot + i;
-          if (slotIdx >= 144) break;                    // bir günü geçme
-          const futureVal = predSeries[i];
-          if (futureVal !== undefined && futureVal !== null) {
-            points.push({
-              time: slotToTime(slotIdx),
-              real: null,
-              predicted: Math.round(futureVal),
-              isFuture: true,
-            });
-          }
-        }
-        void realEndIdx; // kullanılmadı uyarısını önle
-
         setChartData(points);
       } else {
-        // Her 10 dakikada: yeni gerçek veri noktası geldi
-        // İleri tahmin (isFuture) noktasını gerçek veriyle değiştir,
-        // kalan isFuture noktaları yerinde kalsın
+        // Bölgenin slot'unda bir yeni nokta ekle — tamamlanan (bir önceki) slotu göster
         const real = data.raw_data?.[junctionId]?.[arm] ?? null;
-        const predSeries: number[] = data.prediction_series?.[junctionId]?.[arm] ?? [];
         const now = new Date();
-        const curSlot = now.getHours() * 6 + Math.floor(now.getMinutes() / 10);
-        const completedSlot = Math.max(0, curSlot - 1);
-        const completedLabel = slotToTime(completedSlot);
-
+        const slotsPerHour = 60 / slotMinutes;
+        const curSlot = now.getHours() * slotsPerHour + Math.floor(now.getMinutes() / slotMinutes);
+        const completedSlot = Math.max(0, curSlot - 1); // backend ile aynı mantık
         setChartData(prev => {
-          // Tamamlanan slotun tahmin noktasını gerçek veriyle güncelle
-          const updated = prev.map(p =>
-            p.time === completedLabel && p.isFuture
-              ? { ...p, real: real !== null ? Math.round(real) : null, isFuture: false }
-              : p
-          );
-          // Eğer o nokta zaten yoksa ekle (ilk kez görülen slot)
-          const exists = updated.some(p => p.time === completedLabel && !p.isFuture);
-          if (!exists) {
-            updated.push({
-              time: completedLabel,
-              real: real !== null ? Math.round(real) : null,
-              predicted: predSeries[completedSlot] !== undefined
-                ? Math.round(predSeries[completedSlot]) : null,
-              isFuture: false,
-            });
-          }
-          return updated.slice(-144);
+          const point: ChartPoint = {
+            time: slotToTime(completedSlot),
+            real: real !== null ? Math.round(real) : null,
+            predicted: predicted !== null ? Math.round(predicted) : null,
+          };
+          return [...prev, point].slice(-(1440 / slotMinutes)); // max 1 gün
         });
       }
     } catch { /* sunucu hatası sessizce geç */ }
-  }, [selectedRegion?.name]);
+  }, [selectedRegion?.name, selectedRegion?.slotMinutes]);
 
   // Junction veya kol değişince polling sıfırla
   useEffect(() => {
@@ -280,12 +230,13 @@ export default function DashboardPage() {
     if (!selectedJunction || !selectedArm) return;
     setChartData([]);
     fetchPoint(selectedJunction.id, selectedArm, true);  // ilk yükleme: tam zaman serisi
+    const pollMs = (selectedRegion?.slotMinutes ?? 10) * 60_000;
     pollingRef.current = setInterval(
       () => fetchPoint(selectedJunction.id, selectedArm, false),
-      600_000  // 10 dakika
+      pollMs
     );
     return stopPolling;
-  }, [selectedJunction?.id, selectedArm, fetchPoint, stopPolling]);
+  }, [selectedJunction?.id, selectedArm, selectedRegion?.slotMinutes, fetchPoint, stopPolling]);
 
   async function handleGetPhase() {
     if (!selectedJunction) return;
@@ -314,61 +265,6 @@ export default function DashboardPage() {
     } catch { /* hata sessizce geç */ }
     finally { setPhaseLoading(false); }
   }
-
-  // Şu anki saati "HH:MM" formatında tut — grafik ReferenceLine için
-  useEffect(() => {
-    const update = () => {
-      const now = new Date();
-      const slot = Math.floor(now.getMinutes() / 10) * 10;
-      setNowLabel(`${String(now.getHours()).padStart(2, '0')}:${String(slot).padStart(2, '0')}`);
-    };
-    update();
-    const id = setInterval(update, 60_000);
-    return () => clearInterval(id);
-  }, []);
-
-  const fetchDayAhead = useCallback(async () => {
-    if (!selectedJunction || !selectedArm || !selectedRegion) return;
-    setDayAheadLoading(true);
-    setDayAheadError(null);
-    setDayAheadData(null);
-    try {
-      const res = await apiClient.get('/predict/day-ahead', {
-        params: { region: selectedRegion.name, date: dayAheadDate },
-      });
-      const series: Record<string, Record<string, number[]>> = res.data.prediction_series ?? {};
-      const jidKey = String(selectedJunction.id);
-      const armSeries: number[] = series[jidKey]?.[selectedArm] ?? [];
-
-      const slotLabel = (i: number) => {
-        const hh = Math.floor(i / 6);
-        const mm = (i % 6) * 10;
-        return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
-      };
-
-      const points: DayAheadPoint[] = armSeries.map((v, i) => ({
-        time: slotLabel(i),
-        predicted: Math.round(Math.max(0, v)),
-      }));
-
-      // Pik saat hesapla
-      let peakIdx = 0;
-      let peakVal = 0;
-      points.forEach((p, i) => { if (p.predicted > peakVal) { peakVal = p.predicted; peakIdx = i; } });
-
-      setDayAheadData({
-        date: dayAheadDate,
-        source: res.data.source ?? '',
-        points,
-        peakSlot: points[peakIdx]?.time ?? '--:--',
-        peakValue: peakVal,
-      });
-    } catch {
-      setDayAheadError('Tahmin alınamadı. Backend veya model sunucusu çalışıyor mu?');
-    } finally {
-      setDayAheadLoading(false);
-    }
-  }, [selectedJunction, selectedArm, selectedRegion, dayAheadDate]);
 
   function handleRegionSelect(region: RegionDef) {
     if (region.name === selectedRegion?.name) return;
@@ -780,7 +676,7 @@ export default function DashboardPage() {
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div>
                 <h2 className="text-base font-bold text-gray-800">
-                  {selectedJunction.name} — Kol {selectedArm} — Araç Akışı
+                  {selectedJunction.name} — Faz {selectedArm} — Araç Akışı
                 </h2>
                 <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
                   {source && <><Activity className="h-3 w-3" />{source === 'AFDGCN' ? 'Garnoldi' : source} · </>}
@@ -795,154 +691,34 @@ export default function DashboardPage() {
               </button>
             </div>
 
-            {/* Anlık grafik */}
             <div className="rounded-2xl bg-white border border-gray-100 shadow-sm p-5">
               {chartData.length === 0 ? (
                 <div className="flex h-52 items-center justify-center text-gray-400 text-sm gap-2">
                   <RefreshCw className="h-4 w-4 animate-spin" /> Veri yükleniyor…
                 </div>
               ) : (
-                <>
-                  <div className="flex items-center gap-3 mb-3 text-xs text-gray-500">
-                    <span className="flex items-center gap-1"><span className="inline-block w-6 h-0.5 bg-blue-500" /> Gerçek veri</span>
-                    <span className="flex items-center gap-1"><span className="inline-block w-6 h-0.5 border-t-2 border-dashed border-amber-400" /> Model tahmini (geçmiş)</span>
-                    <span className="flex items-center gap-1"><span className="inline-block w-6 h-0.5 border-t-2 border-dashed border-emerald-500" /> İleri tahmin</span>
-                  </div>
-                  <ResponsiveContainer width="100%" height={300}>
-                    <LineChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                      <XAxis dataKey="time" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
-                      <YAxis tick={{ fontSize: 11 }} unit=" araç" width={60} />
-                      <Tooltip
-                        contentStyle={{ borderRadius: 10, border: '1px solid #e0e7ff', fontSize: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
-                        formatter={(v: number | null, name: string) => v != null ? [`${v} araç`, name] : ['-', name]}
-                        labelStyle={{ fontWeight: 600, color: '#374151' }}
-                      />
-                      {/* Şu anki zamanı dikey çizgiyle işaretle */}
-                      {nowLabel && (
-                        <ReferenceLine x={nowLabel} stroke="#94a3b8" strokeDasharray="4 2"
-                          label={{ value: 'Şimdi', position: 'top', fontSize: 10, fill: '#94a3b8' }} />
-                      )}
-                      <Line
-                        type="monotone" dataKey="real" name="Gerçek"
-                        stroke="#2563eb" strokeWidth={2.5} dot={false}
-                        activeDot={{ r: 5, fill: '#2563eb' }} connectNulls
-                      />
-                      <Line
-                        type="monotone" dataKey="predicted" name="Model Tahmini"
-                        stroke="#f59e0b" strokeWidth={2} strokeDasharray="6 3"
-                        dot={(props) => {
-                          // İleri tahmin noktasını yeşil daire olarak göster
-                          if (props.payload?.isFuture) {
-                            return <circle key={props.key} cx={props.cx} cy={props.cy} r={5} fill="#10b981" stroke="#fff" strokeWidth={2} />;
-                          }
-                          return <Fragment key={props.key} />;
-                        }}
-                        activeDot={{ r: 5, fill: '#f59e0b' }} connectNulls
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                  {chartData.some(p => p.isFuture) && (
-                    <p className="mt-2 text-xs text-emerald-600 flex items-center gap-1">
-                      <TrendingUp className="h-3 w-3" />
-                      Yeşil nokta — sonraki 10 dakika için model tahmini
-                    </p>
-                  )}
-                </>
-              )}
-            </div>
-
-            {/* ── Gün Öncesi Tahmin ─────────────────────────────────────── */}
-            <div className="rounded-2xl bg-white border border-gray-100 shadow-sm p-5 space-y-4">
-              <div className="flex items-center justify-between flex-wrap gap-3">
-                <div className="flex items-center gap-2">
-                  <CalendarDays className="h-5 w-5 text-indigo-500" />
-                  <h3 className="text-sm font-bold text-gray-800">Gün Öncesi Tahmin</h3>
-                  <span className="text-xs text-gray-400">— tüm gün (144 × 10 dk)</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="date"
-                    value={dayAheadDate}
-                    min={new Date().toISOString().slice(0, 10)}
-                    onChange={(e) => { setDayAheadDate(e.target.value); setDayAheadData(null); }}
-                    className="rounded-lg border border-gray-200 px-2 py-1 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                  />
-                  <button
-                    onClick={fetchDayAhead}
-                    disabled={dayAheadLoading}
-                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 transition"
-                  >
-                    {dayAheadLoading
-                      ? <><RefreshCw className="h-4 w-4 animate-spin" />Tahmin ediliyor…</>
-                      : <><TrendingUp className="h-4 w-4" />Tahmin Et</>}
-                  </button>
-                </div>
-              </div>
-
-              {dayAheadError && (
-                <p className="text-sm text-red-500 flex items-center gap-1">
-                  <span>⚠</span> {dayAheadError}
-                </p>
-              )}
-
-              {dayAheadData && (
-                <>
-                  {/* Özet kartları */}
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="rounded-xl bg-indigo-50 p-3 text-center">
-                      <p className="text-xs text-indigo-400 font-medium">Tarih</p>
-                      <p className="text-sm font-bold text-indigo-700 mt-0.5">{dayAheadData.date}</p>
-                    </div>
-                    <div className="rounded-xl bg-rose-50 p-3 text-center">
-                      <p className="text-xs text-rose-400 font-medium">Pik Saat</p>
-                      <p className="text-sm font-bold text-rose-700 mt-0.5">{dayAheadData.peakSlot}</p>
-                    </div>
-                    <div className="rounded-xl bg-amber-50 p-3 text-center">
-                      <p className="text-xs text-amber-400 font-medium">Pik Araç</p>
-                      <p className="text-sm font-bold text-amber-700 mt-0.5">{dayAheadData.peakValue} araç</p>
-                    </div>
-                  </div>
-
-                  {/* Tam gün grafiği */}
-                  <ResponsiveContainer width="100%" height={240}>
-                    <LineChart data={dayAheadData.points} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                      <XAxis
-                        dataKey="time"
-                        tick={{ fontSize: 9 }}
-                        interval={11}
-                        tickFormatter={(t: string) => t.endsWith(':00') ? t : ''}
-                      />
-                      <YAxis tick={{ fontSize: 11 }} unit=" araç" width={60} />
-                      <Tooltip
-                        contentStyle={{ borderRadius: 10, fontSize: 12 }}
-                        formatter={(v: number) => [`${v} araç`, 'Tahmin']}
-                        labelStyle={{ fontWeight: 600 }}
-                      />
-                      <Line
-                        type="monotone" dataKey="predicted" name="Tahmin"
-                        stroke="#6366f1" strokeWidth={2.5} dot={false}
-                        activeDot={{ r: 4, fill: '#6366f1' }}
-                      />
-                      {/* Sabah ve akşam pik bantları */}
-                      <ReferenceLine x="07:00" stroke="#fbbf24" strokeDasharray="3 2" label={{ value: 'Sabah Piki', position: 'insideTopRight', fontSize: 9, fill: '#d97706' }} />
-                      <ReferenceLine x="17:00" stroke="#fbbf24" strokeDasharray="3 2" label={{ value: 'Akşam Piki', position: 'insideTopRight', fontSize: 9, fill: '#d97706' }} />
-                    </LineChart>
-                  </ResponsiveContainer>
-
-                  <p className="text-xs text-gray-400 flex items-center gap-1">
-                    <Brain className="h-3 w-3" />
-                    Kaynak: {dayAheadData.source === 'AFDGCN' ? 'Garnoldi (AFDGCN)' : 'Hareketli Ortalama (model yok)'}
-                  </p>
-                </>
-              )}
-
-              {!dayAheadData && !dayAheadLoading && !dayAheadError && (
-                <div className="flex h-28 items-center justify-center text-gray-400 text-sm gap-2">
-                  <CalendarDays className="h-5 w-5 opacity-40" />
-                  Tarih seçip "Tahmin Et" butonuna tıklayın
-                </div>
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                    <XAxis dataKey="time" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+                    <YAxis tick={{ fontSize: 11 }} unit=" araç" width={60} />
+                    <Tooltip
+                      contentStyle={{ borderRadius: 10, border: '1px solid #e0e7ff', fontSize: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
+                      formatter={(v: number, name: string) => [`${v} araç`, name]}
+                      labelStyle={{ fontWeight: 600, color: '#374151' }}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                    <Line
+                      type="monotone" dataKey="real" name="Gerçek"
+                      stroke="#2563eb" strokeWidth={2.5} dot={false} activeDot={{ r: 5, fill: '#2563eb' }} connectNulls
+                    />
+                    <Line
+                      type="monotone" dataKey="predicted" name="Garnoldi Tahmini"
+                      stroke="#f59e0b" strokeWidth={2.5} strokeDasharray="6 3"
+                      dot={false} activeDot={{ r: 5, fill: '#f59e0b' }} connectNulls
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
               )}
             </div>
           </section>

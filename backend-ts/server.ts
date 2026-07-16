@@ -9,7 +9,7 @@ import app from './source/app'
 import { env } from './source/common/config'
 import { appState } from './source/common/services/app-state.service'
 import { setDbEnabled } from './source/common/services/db-logger.service'
-import { kayseriClient, backgroundFetcher, pythonModel } from './source/predict/services'
+import { kayseriClient, sivasClient, backgroundFetcher, pythonModel } from './source/predict/services'
 import { phasesService } from './source/phases/services'
 import { websocketService } from './source/common/services/websocket.service'
 import { initWebSocketServer } from './source/websocket/controllers/websocket.controller'
@@ -39,12 +39,18 @@ async function startup(): Promise<void> {
   appState.usersDb.set('demo', { username: 'demo', hashedPassword: demoHashedPw, disabled: false })
   console.info('👤 Demo kullanıcı: username=demo / password=demo123')
 
-  // 2. Kayseri API bağlantısı
+  // 2. Şehir API bağlantıları
   try {
     await kayseriClient.ensureAuthenticated()
     console.info('✅ Kayseri API bağlantısı kuruldu')
   } catch (err) {
     console.warn('⚠️  Kayseri API şu an ulaşılamıyor:', err)
+  }
+  try {
+    await sivasClient.ensureAuthenticated()
+    console.info('✅ Sivas API bağlantısı kuruldu')
+  } catch (err) {
+    console.warn('⚠️  Sivas API şu an ulaşılamıyor:', err)
   }
 
   // 3. Veritabanı bağlantısı
@@ -84,11 +90,23 @@ async function startup(): Promise<void> {
       console.info('✅ Kayseri API config DB\'den yüklendi')
     }
 
+    await prisma.apiConfig.upsert({
+      where: { city: 'sivas' },
+      update: {},
+      create: { city: 'sivas', baseUrl: env.sivasApiUrl, username: '', password: '' },
+    })
+    const sivasConf = await prisma.apiConfig.findUnique({ where: { city: 'sivas' } })
+    if (sivasConf?.isActive) {
+      await sivasClient.updateBaseUrl(sivasConf.baseUrl).catch(() => void 0)
+      console.info('✅ Sivas API config DB\'den yüklendi')
+    }
+
     // ── Bölge konfigürasyonu seed ──────────────────────────────────────────
     const defaultRegions = [
       { city: 'kayseri', region: 'ildem', bolgeAdi: '\u0130LDEM', junctionIds: [89, 187, 95, 121, 184, 188, 117, 192, 194], useModel: true, description: 'İldem (AFDGCN)' },
       { city: 'kayseri', region: 'tuna', bolgeAdi: 'TUNA', junctionIds: [5, 3, 87, 25, 26, 27, 7], useModel: false, description: 'Tuna (Moving Average)' },
       { city: 'kayseri', region: 'kizilirmak', bolgeAdi: 'KIZILIRMAK', junctionIds: [130, 38, 176], useModel: false, description: 'Kızılırmak (Moving Average)' },
+      { city: 'sivas', region: 'merkez', bolgeAdi: '', junctionIds: [2, 9], useModel: false, description: 'Sivas Şehir Merkezi (Canlı Sayaç Verisi - Moving Average)' },
     ]
     for (const r of defaultRegions) {
       await prisma.regionConfig.upsert({
@@ -177,6 +195,7 @@ async function startup(): Promise<void> {
       { city: 'kayseri', region: 'ildem', bolgeAdi: '\u0130LDEM', junctionIds: [89, 187, 95, 121, 184, 188, 117, 192, 194], useModel: true, description: 'İldem (AFDGCN)' },
       { city: 'kayseri', region: 'tuna', bolgeAdi: 'TUNA', junctionIds: [5, 3, 87, 25, 26, 27, 7], useModel: false, description: 'Tuna (Moving Average)' },
       { city: 'kayseri', region: 'kizilirmak', bolgeAdi: 'KIZILIRMAK', junctionIds: [130, 38, 176], useModel: false, description: 'Kızılırmak (Moving Average)' },
+      { city: 'sivas', region: 'merkez', bolgeAdi: '', junctionIds: [2, 9], useModel: false, description: 'Sivas Şehir Merkezi (Canlı Sayaç Verisi - Moving Average)' },
     ]
     loadRegionConfigs(defaultRegions)
     console.info('✅ Varsayılan bölge konfigürasyonları yüklendi (Fallback)')

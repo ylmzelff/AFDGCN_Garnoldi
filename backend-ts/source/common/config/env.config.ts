@@ -35,6 +35,9 @@ export const env = {
   ),
   austmApiToken: requireEnv("AUSTM_API_TOKEN", ""),
 
+  // Sivas Belediyesi Ulaşım Sayaç API (auth gerektirmez)
+  sivasApiUrl: requireEnv("SIVAS_API_URL", "https://ulasim.sivas.bel.tr"),
+
   // Python AFDGCN Model Sunucusu
   pythonModelUrl: requireEnv("PYTHON_MODEL_URL", "http://localhost:9002"),
 

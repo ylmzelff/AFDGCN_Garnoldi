@@ -172,16 +172,14 @@ input_dim = 1 + (2 if args.tod else 0) + (2 if getattr(args, 'dow', False) else 
 args.input_dim = input_dim  # engine.py checkpoint'e kaydedecek
 hidden_dim = 64
 output_dim = 1
-embed_dim = 34
+embed_dim = 16
 cheb_k = 2
 horizon = args.horizon
 num_layers = 1
 heads = 4
 timesteps = args.lag
 kernel_size = 5
-# Seq2Seq GRU decoder: algoritmanin kendisi horizon adim ileri tahmin yapar
-use_seq2seq = True
-print(f"Model: input_dim={input_dim}, timesteps={timesteps}, horizon={horizon}, seq2seq={use_seq2seq}")
+print(f"Model: input_dim={input_dim}, timesteps={timesteps}, horizon={horizon}")
 model = Network(num_node = args.num_nodes,
                 input_dim = input_dim,
                 hidden_dim = hidden_dim,
@@ -193,8 +191,7 @@ model = Network(num_node = args.num_nodes,
                 heads = heads,
                 timesteps = timesteps,
                 A = A,
-                kernel_size = kernel_size,
-                use_seq2seq = use_seq2seq)
+                kernel_size = kernel_size)
 model = model.to(args.device)
 os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3,4'
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

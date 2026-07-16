@@ -1,6 +1,8 @@
 import os
 import numpy as np
 
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 def load_st_dataset(dataset):
     # output B, N, D
     print(f"DEBUG: load_st_dataset called with dataset = '{dataset}'")
@@ -41,7 +43,7 @@ def load_st_dataset(dataset):
         data_path = os.path.join('/content/AFDGCN_Garnoldi/data/Kayseri/kol_bazli_0 .npz')
         data = np.load(data_path)['data'][:, :, :1]  # only the first dimension, traffic flow data
     elif dataset == 'Sivas':
-        data_path = os.path.join('/content/AFDGCN_Garnoldi/data/Sivas/kol_bazli.npz')
+        data_path = os.path.join(_PROJECT_ROOT, 'data', 'Sivas', 'kol_bazli.npz')
         data = np.load(data_path)['data'][:, :, :1]  # only the first dimension, traffic flow data
     else:
         raise ValueError

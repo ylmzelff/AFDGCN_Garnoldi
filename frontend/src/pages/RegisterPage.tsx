@@ -60,7 +60,7 @@ export default function RegisterPage() {
           <div className="text-center">
             <h1 className="text-2xl font-bold tracking-tight">Phase API</h1>
             <p className="text-sm text-white/60 mt-0.5">
-              Kayseri Trafik Faz Tahmin Sistemi
+              Trafik Faz Tahmin Sistemi
             </p>
           </div>
         </div>

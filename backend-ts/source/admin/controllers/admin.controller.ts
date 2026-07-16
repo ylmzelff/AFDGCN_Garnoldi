@@ -2,7 +2,7 @@
 import path from 'path'
 import fs from 'fs'
 import multer from 'multer'
-import { kayseriClient, pythonModel } from '../../predict/services'
+import { clients, pythonModel } from '../../predict/services'
 import prisma from '../../database/prisma'
 import { appState } from '../../common/services/app-state.service'
 import { loadRegionConfigs, REGION_CONFIG } from '../../predict/services/real-time-predictor.service'
@@ -42,9 +42,10 @@ export const upsertApiConfig = async (req: Request, res: Response): Promise<void
     update: { baseUrl, username, password },
     create: { city, baseUrl, username, password },
   })
-  if (city === 'kayseri') {
-    kayseriClient.updateCredentials(username, password)
-    await kayseriClient.updateBaseUrl(baseUrl).catch(() => void 0)
+  const client = clients[city]
+  if (client) {
+    client.updateCredentials(username, password)
+    await client.updateBaseUrl(baseUrl).catch(() => void 0)
   }
   res.json({ ...conf, password: '***' })
 }

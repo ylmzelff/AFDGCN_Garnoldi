@@ -5,7 +5,7 @@
  * Python real_time_predictor.py'nin TypeScript karşılığı.
  */
 
-import type { KayseriClientService, ArmData } from './kayseri-client.service'
+import type { TrafficClient, ArmData } from './traffic-client.interface'
 import type { PythonModelService } from './python-model.service'
 import type { PhaseCalculatorService } from '../../phases/services/phase-calculator.service'
 import type { PhaseSeriesItem } from '../../phases/types/phases.types'
@@ -100,6 +100,8 @@ export interface RegionPredictionResult {
   time_series?: Record<number, Record<string, number[]>>
   /** time_series dizisinin hangi slot index'ten başladığı (her zaman 0) */
   time_series_start_slot?: number
+  /** Bu bölgenin veri kaynağının doğal zaman dilimi (dakika) — Kayseri: 10, Sivas: 60 */
+  slot_minutes?: number
   /** Anlık gerçek araç sayısı — grafik güncelleme için */
   raw_data?: Record<number, Record<string, number>>
   /**
@@ -123,19 +125,26 @@ export class RealTimePredictorService {
   private readonly cache = new PredictionCache(300_000)
 
   constructor(
-    private readonly kayseriClient: KayseriClientService,
+    private readonly clients: Record<string, TrafficClient>,
     private readonly pythonModel: PythonModelService,
     private readonly phaseCalculator: PhaseCalculatorService,
   ) {}
 
-  private minuteIndexNow(): number {
-    const now = new Date()
-    return now.getHours() * 6 + Math.floor(now.getMinutes() / 10)
+  private clientFor(city: string): TrafficClient {
+    const client = this.clients[city]
+    if (!client) throw new Error(`[real-time-predictor] '${city}' için tanımlı veri istemcisi yok.`)
+    return client
   }
 
-  private timeLabelNow(): string {
+  /** slotMinutes: bölgenin veri kaynağının doğal dilim uzunluğu (Kayseri: 10, Sivas: 60). */
+  private minuteIndexNow(slotMinutes: number): number {
     const now = new Date()
-    const slot = Math.floor(now.getMinutes() / 10) * 10
+    return now.getHours() * (60 / slotMinutes) + Math.floor(now.getMinutes() / slotMinutes)
+  }
+
+  private timeLabelNow(slotMinutes: number): string {
+    const now = new Date()
+    const slot = Math.floor(now.getMinutes() / slotMinutes) * slotMinutes
     return `${String(now.getHours()).padStart(2, '0')}:${String(slot).padStart(2, '0')}`
   }
 
@@ -161,13 +170,6 @@ export class RealTimePredictorService {
       }
     }
     return result
-  }
-
-  /** slot index → "HH:MM" dönüştürür */
-  private slotToLabel(slotIdx: number): string {
-    const hh = Math.floor(slotIdx / 6)
-    const mm = (slotIdx % 6) * 10
-    return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
   }
 
   /** Anlık (mevcut dilim) gerçek araç sayısını döner (grafik güncelleme için) */
@@ -256,12 +258,14 @@ export class RealTimePredictorService {
     const cached = this.cache.get(region)
     if (cached) return cached
 
-    const minuteIdx = this.minuteIndexNow()
+    const client = this.clientFor(config.city)
+    const slotMinutes = client.getSlotMinutes()
+    const minuteIdx = this.minuteIndexNow(slotMinutes)
     let kayseriOk = true
     let dataByJunction: Record<number, ArmData[]> | null = null
 
     try {
-      dataByJunction = await this.kayseriClient.fetchRegion(region)
+      dataByJunction = await client.fetchRegion(region)
     } catch {
       kayseriOk = false
     }
@@ -290,12 +294,13 @@ export class RealTimePredictorService {
     const result: RegionPredictionResult = {
       region,
       timestamp: new Date().toISOString(),
-      time_label: this.timeLabelNow(),
+      time_label: this.timeLabelNow(slotMinutes),
       predictions,
       source,
       kayseri_ok: kayseriOk,
       phases,
       junction_count: Object.keys(predictions).length,
+      slot_minutes: slotMinutes,
     }
 
     if (dataByJunction) {
@@ -326,6 +331,8 @@ export class RealTimePredictorService {
         result.phase_series = this.phaseCalculator.computePhaseSeries(
           result.prediction_series,
           region,
+          undefined,
+          slotMinutes,
         )
       }
     }
@@ -370,61 +377,72 @@ export class RealTimePredictorService {
     date: string
     prediction_series: Record<number, Record<string, number[]>>
     slot_labels: string[]
+    slot_minutes: number
     source: 'AFDGCN' | 'moving_average'
   }> {
     const config = REGION_CONFIG[region]
     if (!config) throw new Error(`Bilinmeyen bolge: ${region}`)
 
+    const client = this.clientFor(config.city)
+    const slotMinutes = client.getSlotMinutes()
+    const slotsPerDay = 1440 / slotMinutes
+
     // Tohum: hedef tarihten 1 gun oncesi
     const targetMs = new Date(targetDate).getTime()
     const seedDate = new Date(targetMs - 86_400_000).toISOString().slice(0, 10)
 
-    let seedData: Record<number, import('./kayseri-client.service').ArmData[]> | null = null
+    let seedData: Record<number, ArmData[]> | null = null
     try {
-      seedData = await this.kayseriClient.fetchRegionForDate(region, seedDate)
+      seedData = await client.fetchRegionForDate(region, seedDate)
     } catch {
-      console.warn(`[day-ahead] Kayseri API'den tohum veri alinamadi (${seedDate}), bos tohum kullanilacak`)
+      console.warn(`[day-ahead] '${config.city}' API'den tohum veri alinamadi (${seedDate}), bos tohum kullanilacak`)
     }
 
-    const slotLabel = (i: number) => {
-      const hh = Math.floor(i / 6)
-      const mm = (i % 6) * 10
-      return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
-    }
-    const slotLabels = Array.from({ length: 144 }, (_, i) => slotLabel(i))
+    const slotLabels = Array.from({ length: slotsPerDay }, (_, i) => this.slotToLabel(i, slotMinutes))
 
     let predictionSeries: Record<number, Record<string, number[]>>
     let source: 'AFDGCN' | 'moving_average' = 'moving_average'
 
     if (seedData && config.useModel) {
-      const result = await this.pythonModel.predictDayAhead(seedData, 143)
+      const result = await this.pythonModel.predictDayAhead(seedData, slotsPerDay - 1)
       if (result) {
         predictionSeries = result.series
         source = result.source
       } else {
-        predictionSeries = this.buildFallbackDayAhead(config.junctionIds)
+        predictionSeries = this.buildFallbackDayAhead(config.junctionIds, slotsPerDay, slotMinutes)
       }
     } else {
-      predictionSeries = this.buildFallbackDayAhead(config.junctionIds, seedData ?? undefined)
+      predictionSeries = this.buildFallbackDayAhead(config.junctionIds, slotsPerDay, slotMinutes, seedData ?? undefined)
     }
 
-    return { region, date: targetDate, prediction_series: predictionSeries, slot_labels: slotLabels, source }
+    return { region, date: targetDate, prediction_series: predictionSeries, slot_labels: slotLabels, slot_minutes: slotMinutes, source }
+  }
+
+  /** slot index → "HH:MM" dönüştürür (slotMinutes'e göre genelleştirilmiş). */
+  private slotToLabel(slotIdx: number, slotMinutes: number): string {
+    const totalMinutes = slotIdx * slotMinutes
+    const hh = Math.floor(totalMinutes / 60)
+    const mm = totalMinutes % 60
+    return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
   }
 
   /** Model yokken deterministik saatlik ortalama fallback uretir. */
   private buildFallbackDayAhead(
     junctionIds: number[],
-    seedData?: Record<number, import('./kayseri-client.service').ArmData[]>,
+    slotsPerDay: number,
+    slotMinutes: number,
+    seedData?: Record<number, ArmData[]>,
   ): Record<number, Record<string, number[]>> {
     const result: Record<number, Record<string, number[]>> = {}
-    const PEAK_PATTERN = Array.from({ length: 144 }, (_, i) => {
-      const h = Math.floor(i / 6)
+    const PEAK_PATTERN = Array.from({ length: slotsPerDay }, (_, i) => {
+      const h = Math.floor((i * slotMinutes) / 60)
       if (h >= 7 && h <= 9) return 1.8
       if (h >= 17 && h <= 19) return 1.5
       if (h >= 12 && h <= 13) return 1.2
       if (h < 5 || h >= 23) return 0.3
       return 0.8
     })
+    const midSlot = Math.floor(slotsPerDay / 2)
 
     for (const jid of junctionIds) {
       const seedArms = seedData?.[jid]
@@ -432,7 +450,7 @@ export class RealTimePredictorService {
       const arms = seedArms?.map((a) => String(a['edge_direction'] ?? '').toUpperCase()).filter(Boolean) ?? ['A', 'B', 'C', 'D']
       for (const arm of arms) {
         const seedArm = seedArms?.find((a) => String(a['edge_direction'] ?? '').toUpperCase() === arm)
-        const baseVal = seedArm ? (Number(seedArm['72'] ?? seedArm['84'] ?? 20)) : 20
+        const baseVal = seedArm ? (Number(seedArm[String(midSlot)] ?? 20)) : 20
         result[jid][arm] = PEAK_PATTERN.map((factor) => Math.round(baseVal * factor))
       }
     }

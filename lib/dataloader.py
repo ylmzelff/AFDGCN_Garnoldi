@@ -73,6 +73,8 @@ def split_data_by_days(data, val_days, test_days, interval=60):
     :return:
     '''
     T = int((24*60) / interval)
+    test_days = int(test_days)
+    val_days  = int(val_days)
     test_data = data[-T * test_days:]
     val_data = data[-T * (test_days + val_days): -T * test_days]
     train_data = data[:-T * (test_days + val_days)]
@@ -106,7 +108,8 @@ def get_dataloader(args, normalizer = 'std', tod=False, dow=False, weather=False
         data = add_temporal_features(data, tod=tod, dow=dow)
     # 4.数据集划分(训练集、验证集、测试集)
     if args.test_ratio > 1:
-        data_train, data_val, data_test = split_data_by_days(data, args.val_ratio, args.test_ratio)
+        # interval=10: verimiz 10 dakikalik aralikli (144 slot/gun)
+        data_train, data_val, data_test = split_data_by_days(data, args.val_ratio, args.test_ratio, interval=10)
     else:
         data_train, data_val, data_test = split_data_by_ratio(data, args.val_ratio, args.test_ratio)
     # 5.滑动窗口采样
