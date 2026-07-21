@@ -24,6 +24,7 @@ import type { TrafficClient, ArmData } from './traffic-client.interface'
 export const SIVAS_JUNCTION_NAMES: Record<number, string> = {
   2: 'KÖY HİZMETLERİ',
   9: 'TSO',
+  3: 'EVCİLER',
 }
 
 function normalizeName(name: string): string {
@@ -33,6 +34,24 @@ function normalizeName(name: string): string {
 const NAME_TO_ID: Record<string, number> = Object.fromEntries(
   Object.entries(SIVAS_JUNCTION_NAMES).map(([id, name]) => [normalizeName(name), Number(id)]),
 )
+
+/**
+ * Canli API "yon" alanini gercek yer adiyla dondurur (ör. "Hilton", "Universite->4 İşletme"),
+ * "A"/"B"/"C"/"D" harfi degil. node_map / egitim verisi harf bazli oldugu icin burada
+ * kavsak bazinda isim -> harf eslemesi yapiyoruz. Eslenmeyen yonler (ör. TSO'nun 4. yonu,
+ * EVCİLER'in "Karayollari" yonu) modelin egitildigi semada olmadigi icin atlanir.
+ */
+const DIRECTION_NAME_TO_ARM: Record<number, Record<string, string>> = {
+  9: { // TSO
+    [normalizeName('Universite->4 İşletme')]: 'A',
+    [normalizeName('4 İşletme->Üniversite')]: 'B',
+    [normalizeName('Kültür Müdürlüğü->Üniversite')]: 'D',
+  },
+  3: { // EVCİLER
+    [normalizeName('Hilton')]: 'A',
+    [normalizeName('Stad Geliş')]: 'B',
+  },
+}
 
 // -----------------------------------------------------------------------------
 // Sivas API Tipleri
@@ -120,7 +139,9 @@ export class SivasClientService implements TrafficClient {
         continue
       }
 
-      output[jid] = item.kavsakYonler.map((y) => this.toArmData(y))
+      output[jid] = item.kavsakYonler
+        .map((y) => this.toArmData(y, jid))
+        .filter((a): a is ArmData => a !== null)
     }
 
     return output
@@ -130,8 +151,13 @@ export class SivasClientService implements TrafficClient {
    * Saatlik veriyi ArmData'ya çevirir — "0".."23" anahtarları, her biri o
    * saatin toplam araç sayısı. Aynı saat için birden fazla kayıt gelirse
    * (API'de görülen bir durum) toplanır, asla bölünmez/interpole edilmez.
+   * Kavsagin bilinen bir yon->harf eslemesi yoksa (jid DIRECTION_NAME_TO_ARM'da
+   * yok) veya bu spesifik yon eslenemiyorsa null doner (cagiran filtreler).
    */
-  private toArmData(yon: SivasYonItem): ArmData {
+  private toArmData(yon: SivasYonItem, jid: number): ArmData | null {
+    const arm = DIRECTION_NAME_TO_ARM[jid]?.[normalizeName(yon.yon)]
+    if (!arm) return null
+
     const hourTotals = new Array<number>(24).fill(0)
 
     for (const { saat, sayi } of yon.sayim) {
@@ -141,8 +167,7 @@ export class SivasClientService implements TrafficClient {
       }
     }
 
-    const direction = yon.yon.trim().toUpperCase()
-    const armData: ArmData = { edge_direction: direction, edge_name: yon.yon }
+    const armData: ArmData = { edge_direction: arm, edge_name: yon.yon }
 
     for (let hour = 0; hour < 24; hour++) {
       armData[String(hour)] = hourTotals[hour]

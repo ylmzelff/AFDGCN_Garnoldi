@@ -4,8 +4,12 @@
  * PYTHON_MODEL_URL adresinde çalışan Python model sunucusunu çağırır.
  * Model sunucusu yoksa veya hata alırsa null döner ve caller moving average'a düşer.
  *
+ * Her çağrı hangi bölge (region) için olduğunu belirtir — Python tarafı
+ * bölge başına ayrı model tutar, böylece birden fazla şehir aynı anda
+ * birbirini etkilemeden serve edilebilir.
+ *
  * Python model sunucusu başlatmak için:
- *   python -m backend.model_server  (veya mevcut FastAPI backend port 9002'de)
+ *   python model_server.py  (FastAPI, port 9002)
  */
 
 import axios, { type AxiosInstance } from 'axios'
@@ -13,6 +17,7 @@ import { env } from '../../common/config'
 import type { ArmData } from './kayseri-client.service'
 
 interface ModelPredictRequest {
+  region: string
   data_by_junction: Record<number, ArmData[]>
   minute_index: number
 }
@@ -23,6 +28,7 @@ interface ModelPredictResponse {
 }
 
 interface ModelSeriesRequest {
+  region: string
   data_by_junction: Record<number, ArmData[]>
   completed_idx: number
 }
@@ -31,6 +37,12 @@ interface ModelSeriesResponse {
   prediction_series: Record<number, Record<string, number[]>>
   source: 'AFDGCN' | 'moving_average'
 }
+
+export interface NodeMap {
+  [junctionId: number]: Record<string, number>
+}
+
+export type GraphEdges = Array<[number, number] | [number, number, number]>
 
 export class PythonModelService {
   private http: AxiosInstance
@@ -51,6 +63,7 @@ export class PythonModelService {
    * @returns predictions dict veya null (model sunucusu yoksa)
    */
   async predictNextTimestep(
+    region: string,
     dataByJunction: Record<number, ArmData[]>,
     minuteIndex: number,
   ): Promise<Record<number, Record<string, number>> | null> {
@@ -61,6 +74,7 @@ export class PythonModelService {
 
     try {
       const payload: ModelPredictRequest = {
+        region,
         data_by_junction: dataByJunction,
         minute_index: minuteIndex,
       }
@@ -70,7 +84,7 @@ export class PythonModelService {
     } catch {
       this.available = false
       this.lastCheckAt = Date.now()
-      console.warn('[python-model] /predict/next ulaşılamıyor → moving average devreye alınıyor')
+      console.warn(`[python-model] /predict/next ulaşılamıyor (region=${region}) → moving average devreye alınıyor`)
       return null
     }
   }
@@ -81,6 +95,7 @@ export class PythonModelService {
    * @returns {series, source} veya null (model sunucusu yoksa)
    */
   async predictSeries(
+    region: string,
     dataByJunction: Record<number, ArmData[]>,
     completedIdx: number,
   ): Promise<{ series: Record<number, Record<string, number[]>>; source: 'AFDGCN' | 'moving_average' } | null> {
@@ -89,6 +104,7 @@ export class PythonModelService {
     }
     try {
       const payload: ModelSeriesRequest = {
+        region,
         data_by_junction: dataByJunction,
         completed_idx: completedIdx,
       }
@@ -99,14 +115,20 @@ export class PythonModelService {
     } catch {
       this.available = false
       this.lastCheckAt = Date.now()
-      console.warn('[python-model] /predict/series ulaşılamıyor → TS fallback devreye alınıyor')
+      console.warn(`[python-model] /predict/series ulaşılamıyor (region=${region}) → TS fallback devreye alınıyor`)
       return null
     }
   }
 
-  async getModelStatus(): Promise<Record<string, unknown>> {
+  /**
+   * region=null ise yüklü tüm bölgelerin durumunu döner.
+   */
+  async getModelStatus(region?: string): Promise<Record<string, unknown>> {
     try {
-      const resp = await this.http.get<Record<string, unknown>>('/model/status', { timeout: 5000 })
+      const resp = await this.http.get<Record<string, unknown>>('/model/status', {
+        timeout: 5000,
+        params: region ? { region } : undefined,
+      })
       return resp.data
     } catch {
       return { available: false, error: 'Model sunucusu ulaşılamıyor' }
@@ -117,21 +139,27 @@ export class PythonModelService {
    * Python model sunucusuna verilen .pth dosyasını yüklemesini söyler (dosya yolu ile).
    */
   async loadModel(params: {
+    region: string
     path: string
     numNodes: number
     lag: number
     horizon: number
     scalerMean: number
     scalerStd: number
+    nodeMap?: NodeMap
+    graphEdges?: GraphEdges
   }): Promise<{ success: boolean; message: string }> {
     try {
       const resp = await this.http.post<{ success: boolean; message: string }>('/model/load', {
+        region: params.region,
         path: params.path,
         num_nodes: params.numNodes,
         lag: params.lag,
         horizon: params.horizon,
         scaler_mean: params.scalerMean,
         scaler_std: params.scalerStd,
+        node_map: params.nodeMap ?? null,
+        graph_edges: params.graphEdges ?? null,
       }, { timeout: 30_000 })
       this.available = true
       return resp.data
@@ -146,6 +174,7 @@ export class PythonModelService {
    * weights null ise filePath ile eski yönteme düşer.
    */
   async loadModelFromBytes(params: {
+    region: string
     weights: Buffer | Uint8Array | null
     filePath: string
     numNodes: number
@@ -153,16 +182,21 @@ export class PythonModelService {
     horizon: number
     scalerMean: number
     scalerStd: number
+    nodeMap?: NodeMap
+    graphEdges?: GraphEdges
   }): Promise<{ success: boolean; message: string }> {
     if (!params.weights || params.weights.length === 0) {
       // Eski kayıt: weights yok, dosya yoluna geri dön
       return this.loadModel({
+        region: params.region,
         path: params.filePath,
         numNodes: params.numNodes,
         lag: params.lag,
         horizon: params.horizon,
         scalerMean: params.scalerMean,
         scalerStd: params.scalerStd,
+        nodeMap: params.nodeMap,
+        graphEdges: params.graphEdges,
       })
     }
     try {
@@ -172,11 +206,14 @@ export class PythonModelService {
         {
           timeout: 30_000,
           params: {
+            region: params.region,
             num_nodes: params.numNodes,
             lag: params.lag,
             horizon: params.horizon,
             scaler_mean: params.scalerMean,
             scaler_std: params.scalerStd,
+            node_map: params.nodeMap ? JSON.stringify(params.nodeMap) : undefined,
+            graph_edges: params.graphEdges ? JSON.stringify(params.graphEdges) : undefined,
           },
           headers: { 'Content-Type': 'application/octet-stream' },
         },

@@ -6,7 +6,7 @@
  */
 
 import type { TrafficClient, ArmData } from './traffic-client.interface'
-import type { PythonModelService } from './python-model.service'
+import type { PythonModelService, NodeMap, GraphEdges } from './python-model.service'
 import type { PhaseCalculatorService } from '../../phases/services/phase-calculator.service'
 import type { PhaseSeriesItem } from '../../phases/types/phases.types'
 
@@ -21,6 +21,10 @@ export interface RegionConfigItem {
   description: string
   /** API bolgeAdi parametresi (örn. "İLDEM", "TUNA", "KIZILIRMAK") — DB'den gelir */
   bolgeAdi: string
+  /** junction_id → {arm: node_index} — AFDGCN model input sırası, DB'den (RegionConfig.nodeMap) gelir */
+  nodeMap?: NodeMap
+  /** Adjacency graph kenarları — DB'den (RegionConfig.graphEdges) gelir */
+  graphEdges?: GraphEdges
 }
 
 export const REGION_CONFIG: Record<string, RegionConfigItem> = {}
@@ -30,7 +34,16 @@ export const REGION_CONFIG: Record<string, RegionConfigItem> = {}
  * server.ts startup()'ta çağrılır.
  */
 export function loadRegionConfigs(
-  configs: Array<{ city: string; region: string; junctionIds: number[]; useModel: boolean; description: string; bolgeAdi: string }>,
+  configs: Array<{
+    city: string
+    region: string
+    junctionIds: number[]
+    useModel: boolean
+    description: string
+    bolgeAdi: string
+    nodeMap?: NodeMap | null
+    graphEdges?: GraphEdges | null
+  }>,
 ): void {
   for (const c of configs) {
     REGION_CONFIG[c.region] = {
@@ -39,6 +52,8 @@ export function loadRegionConfigs(
       useModel: c.useModel,
       description: c.description,
       bolgeAdi: c.bolgeAdi,
+      nodeMap: c.nodeMap ?? undefined,
+      graphEdges: c.graphEdges ?? undefined,
     }
   }
   console.info(`[region-config] ${configs.length} bölge yüklendi: ${configs.map((c) => c.region).join(', ')}`)
@@ -274,7 +289,7 @@ export class RealTimePredictorService {
     let source: 'AFDGCN' | 'moving_average' = 'moving_average'
 
     if (dataByJunction && config.useModel) {
-      const modelResult = await this.pythonModel.predictNextTimestep(dataByJunction, minuteIdx)
+      const modelResult = await this.pythonModel.predictNextTimestep(region, dataByJunction, minuteIdx)
       if (modelResult) {
         predictions = modelResult
         source = 'AFDGCN'
@@ -312,7 +327,7 @@ export class RealTimePredictorService {
 
       if (config.useModel) {
         // Model kullanan bölgeler: Python sunucusundan gerçek AFDGCN rolling tahminlerini al
-        const seriesResult = await this.pythonModel.predictSeries(dataByJunction, completedIdx)
+        const seriesResult = await this.pythonModel.predictSeries(region, dataByJunction, completedIdx)
         if (seriesResult) {
           result.prediction_series = seriesResult.series
           // Kaynak etiketini model sunucusu yanıtıyla güncelle

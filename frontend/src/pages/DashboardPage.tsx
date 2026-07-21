@@ -66,6 +66,7 @@ export default function DashboardPage() {
 
   // Bölge listesi — API'den dinamik yüklenir
   const [regions, setRegions] = useState<RegionDef[]>([]);
+  const [selectedCity, setSelectedCity] = useState<string | null>(null);
   const [selectedRegion, setSelectedRegion] = useState<RegionDef | null>(null);
 
   // Kavşak canlı verileri (kart badge'leri için)
@@ -105,6 +106,7 @@ export default function DashboardPage() {
         })),
       }));
       setRegions(built);
+      setSelectedCity(built[0]?.city ?? null);
       setSelectedRegion(built[0] ?? null);
     }).catch(() => { /* API hazır değilse sessizce geç */ });
   }, []);
@@ -266,6 +268,24 @@ export default function DashboardPage() {
     finally { setPhaseLoading(false); }
   }
 
+  function handleCitySelect(city: string) {
+    if (city === selectedCity) return;
+    const firstRegionOfCity = regions.find((r) => r.city === city) ?? null;
+    setSelectedCity(city);
+    stopPolling();
+    setSelectedRegion(firstRegionOfCity);
+    setSelectedJunction(null);
+    setSelectedArm(null);
+    setChartData([]);
+    setPhaseData(null);
+    setLiveData({});
+    if (firstRegionOfCity) {
+      setLiveLoading(true);
+      fetchLiveData(firstRegionOfCity.name);
+    }
+    setJunctionOpen(true);
+  }
+
   function handleRegionSelect(region: RegionDef) {
     if (region.name === selectedRegion?.name) return;
     stopPolling();
@@ -339,6 +359,30 @@ export default function DashboardPage() {
           )}
         </nav>
 
+        {/* ── Şehir Seç ─────────────────────────────────────────────── */}
+        <section>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-xs font-bold uppercase tracking-widest text-gray-500">Şehir Seç</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {Array.from(new Set(regions.map((r) => r.city))).map((city) => {
+              const active = selectedCity === city;
+              return (
+                <button
+                  key={city}
+                  onClick={() => handleCitySelect(city)}
+                  className={`rounded-full border px-4 py-1.5 text-sm font-semibold transition focus:outline-none ${active
+                      ? 'border-brand bg-brand text-white shadow-md'
+                      : 'border-gray-200 bg-white text-gray-700 hover:border-brand/50 hover:shadow-sm'
+                    }`}
+                >
+                  {city.toUpperCase()}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
         {/* ── Bölge Seç ─────────────────────────────────────────────── */}
         <section>
           <button
@@ -355,7 +399,7 @@ export default function DashboardPage() {
           </button>
           {regionOpen && (
             <div className="mt-2 flex flex-wrap gap-2">
-              {regions.map((r) => {
+              {regions.filter((r) => r.city === selectedCity).map((r) => {
                 const active = selectedRegion?.name === r.name;
                 return (
                   <button
@@ -476,8 +520,6 @@ export default function DashboardPage() {
                 <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 bg-gray-50 border-b border-gray-100">
                   <div className="flex items-center gap-2.5 flex-wrap">
                     <span className="font-semibold text-gray-800">{selectedJunction.name}</span>
-                    <span className="text-xs bg-brand/10 text-brand font-bold px-2.5 py-0.5 rounded-full">{phaseCycle}s döngü</span>
-                    <span className="text-xs bg-gray-200 text-gray-600 font-medium px-2 py-0.5 rounded-full">Webster Oranınlı Mod</span>
                     {source && (
                       <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${source === 'AFDGCN' ? 'bg-indigo-100 text-indigo-700' : 'bg-purple-100 text-purple-700'
                         }`}>{source === 'AFDGCN' ? 'Garnoldi' : source}</span>

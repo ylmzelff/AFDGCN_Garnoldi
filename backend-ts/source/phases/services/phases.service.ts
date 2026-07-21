@@ -177,7 +177,7 @@ export class PhasesService {
     let predictionSource: 'AFDGCN' | 'moving_average' = 'moving_average'
 
     if (dataByJunction && config.useModel) {
-      const modelResult = await this.pythonModel.predictNextTimestep(dataByJunction, minuteIdx)
+      const modelResult = await this.pythonModel.predictNextTimestep(region, dataByJunction, minuteIdx)
       if (modelResult) {
         predictions = modelResult
         predictionSource = 'AFDGCN'
@@ -201,7 +201,7 @@ export class PhasesService {
       let predictionSeries: Record<number, Record<string, number[]>> | null = null
 
       if (config.useModel) {
-        const seriesResult = await this.pythonModel.predictSeries(dataByJunction, completedIdx)
+        const seriesResult = await this.pythonModel.predictSeries(region, dataByJunction, completedIdx)
         predictionSeries = seriesResult?.series ?? null
       }
 

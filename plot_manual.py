@@ -4,23 +4,24 @@ import matplotlib.dates as mdates
 from matplotlib.ticker import FuncFormatter
 
 # Load Real Data
-real_data_path = r"./real_gar_garnoldi (2).csv"
+real_data_path = r"./real_gar_garnoldi (4).csv"
 df_real = pd.read_csv(real_data_path)
 
 # Load Prediction Data
-pred_data_path = r"./test_gar_garnoldi (3).csv"
+pred_data_path = r"./test_gar_garnoldi (4).csv"
 df_pred = pd.read_csv(pred_data_path)
 
 # Define Parameters
-# İldem Nisan 2026 verisi: 30 gün × 144 timestep = 4320 → test %20 = 864 timestep
-# Test başlangıcı: 01.04.2026 00:00 + 3456 × 10 dk = 25.04.2026 00:00
-start_date = pd.Timestamp("17.06.2026 11:00")  # test seti başlangıcı (Nisan 2026)
+# Sivas verisi: gercek takvim tarihleri npz/csv'ye tasinmadi (boslu 184 gun),
+# bu yuzden x ekseni GERCEK tarihleri degil, sadece test setindeki sirayi
+# saatlik adimlarla gosteren SENTETIK bir zaman eksenidir.
+start_date = pd.Timestamp("2026-01-01 00:00")  # sentetik referans baslangic
 
 
 # Time interval details
-time_interval = 60  # Time interval in minutes (10 dakika)
+time_interval = 60  # Time interval in minutes (Sivas verisi saatlik)
 daily_time_steps = int((24 * 60) / time_interval)  # Number of timesteps per day
-test_time_steps = 373  # Number of test timesteps (%20 × 4320)
+test_time_steps = 882  # Test seti boyu (yeni 4416 timestep'lik veri seti icin)
 
 # Extract relevant test data
 df_pred_location = df_pred[df_pred['location'] == 1].iloc[-test_time_steps:]
@@ -31,8 +32,8 @@ time_steps_pred = [start_date + pd.Timedelta(minutes=time_interval * i) for i in
 time_steps_real = [start_date + pd.Timedelta(minutes=time_interval * i) for i in range(len(df_real_period))]
 
 # Define zoom range based on date and hour
-zoom_start_date = pd.Timestamp("17.06.2026 11:00")  # zoom başlangıcı (Nisan 28)
-zoom_end_date = pd.Timestamp("20.06.2026 21:00")    # zoom bitişi
+zoom_start_date = start_date                        # zoom başlangıcı
+zoom_end_date = start_date + pd.Timedelta(days=4)    # zoom bitişi (ilk 4 gün)
 
 zoom_start = next((i for i, t in enumerate(time_steps_real) if t >= zoom_start_date), 0)
 zoom_end = next((i for i, t in enumerate(time_steps_real) if t >= zoom_end_date), len(time_steps_real) - 1)

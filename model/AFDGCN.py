@@ -17,7 +17,17 @@ from typing import Optional, Tuple
 import math
 import torch.nn.functional as F
 from torch import Tensor
-from torch_sparse import SparseTensor, matmul
+try:
+    from torch_sparse import SparseTensor, matmul
+except ImportError:
+    # torch_sparse bazı torch/Python/OS kombinasyonlarinda derlenebilir wheel'e sahip degil.
+    # Garnoldi algoritmasi (uretimde kullanilan) SparseTensor'a ihtiyac duymuyor - sadece
+    # GPRGNN/APPNP yollarinda kullaniliyor. Onlar cagrilmadikca bu stub yeterli.
+    class SparseTensor:  # type: ignore[no-redef]
+        pass
+
+    def matmul(adj_t, x, reduce=None):  # type: ignore[no-redef]
+        return adj_t.mm(x) if hasattr(adj_t, 'mm') else torch.mm(adj_t, x)
 from scipy.special import legendre
 
 from torch_geometric.nn.conv import MessagePassing

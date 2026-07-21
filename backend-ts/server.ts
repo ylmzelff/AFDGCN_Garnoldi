@@ -17,6 +17,8 @@ import { authService } from './source/auth/services'
 import prisma from './source/database/prisma'
 import { logModelEvent } from './source/common/services/db-logger.service'
 import { loadRegionConfigs } from './source/predict/services/real-time-predictor.service'
+import { KAYSERI_ILDEM_NODE_MAP, KAYSERI_ILDEM_GRAPH_EDGES, SIVAS_MERKEZ_NODE_MAP, SIVAS_MERKEZ_GRAPH_EDGES } from './source/predict/services/region-seed-data'
+import type { NodeMap, GraphEdges } from './source/predict/services/python-model.service'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HTTP + WebSocket Sunucusu
@@ -103,16 +105,21 @@ async function startup(): Promise<void> {
 
     // ── Bölge konfigürasyonu seed ──────────────────────────────────────────
     const defaultRegions = [
-      { city: 'kayseri', region: 'ildem', bolgeAdi: '\u0130LDEM', junctionIds: [89, 187, 95, 121, 184, 188, 117, 192, 194], useModel: true, description: 'İldem (AFDGCN)' },
-      { city: 'kayseri', region: 'tuna', bolgeAdi: 'TUNA', junctionIds: [5, 3, 87, 25, 26, 27, 7], useModel: false, description: 'Tuna (Moving Average)' },
-      { city: 'kayseri', region: 'kizilirmak', bolgeAdi: 'KIZILIRMAK', junctionIds: [130, 38, 176], useModel: false, description: 'Kızılırmak (Moving Average)' },
-      { city: 'sivas', region: 'merkez', bolgeAdi: '', junctionIds: [2, 9], useModel: false, description: 'Sivas Şehir Merkezi (Canlı Sayaç Verisi - Moving Average)' },
+      { city: 'kayseri', region: 'ildem', bolgeAdi: '\u0130LDEM', junctionIds: [89, 187, 95, 121, 184, 188, 117, 192, 194], useModel: true, nodeMap: KAYSERI_ILDEM_NODE_MAP as NodeMap | undefined, graphEdges: KAYSERI_ILDEM_GRAPH_EDGES as GraphEdges | undefined, description: 'İldem (AFDGCN)' },
+      { city: 'kayseri', region: 'tuna', bolgeAdi: 'TUNA', junctionIds: [5, 3, 87, 25, 26, 27, 7], useModel: false, nodeMap: undefined as NodeMap | undefined, graphEdges: undefined as GraphEdges | undefined, description: 'Tuna (Moving Average)' },
+      { city: 'kayseri', region: 'kizilirmak', bolgeAdi: 'KIZILIRMAK', junctionIds: [130, 38, 176], useModel: false, nodeMap: undefined as NodeMap | undefined, graphEdges: undefined as GraphEdges | undefined, description: 'Kızılırmak (Moving Average)' },
+      { city: 'sivas', region: 'merkez', bolgeAdi: '', junctionIds: [9, 3, 90001, 90002, 90003], useModel: true, nodeMap: SIVAS_MERKEZ_NODE_MAP as NodeMap | undefined, graphEdges: SIVAS_MERKEZ_GRAPH_EDGES as GraphEdges | undefined, description: 'Sivas Merkez (AFDGCN)' },
     ]
     for (const r of defaultRegions) {
       await prisma.regionConfig.upsert({
         where: { city_region: { city: r.city, region: r.region } },
         update: { bolgeAdi: r.bolgeAdi },
-        create: { ...r, junctionIds: r.junctionIds },
+        create: {
+          ...r,
+          junctionIds: r.junctionIds,
+          nodeMap: (r.nodeMap as object | undefined) ?? undefined,
+          graphEdges: (r.graphEdges as object | undefined) ?? undefined,
+        },
       })
     }
     const regionRows = await prisma.regionConfig.findMany({ where: { isActive: true } })
@@ -123,6 +130,8 @@ async function startup(): Promise<void> {
       useModel: r.useModel,
       description: r.description,
       bolgeAdi: r.bolgeAdi,
+      nodeMap: r.nodeMap as NodeMap | null,
+      graphEdges: r.graphEdges as GraphEdges | null,
     })))
 
     // ── Model versiyon seed ────────────────────────────────────────────────
@@ -164,16 +173,19 @@ async function startup(): Promise<void> {
       }
     }
 
-    // ── Aktif model DB bytes'ından Python sunucusuna yükle ─────────────────
-    const activeModel = await prisma.modelVersion.findFirst({
-      where: { city: 'kayseri', region: 'ildem', isActive: true },
-      select: {
-        id: true, name: true, weights: true, filePath: true,
-        numNodes: true, lag: true, horizon: true, scalerMean: true, scalerStd: true,
-      },
-    })
-    if (activeModel) {
+    // ── Her bölgenin aktif modelini DB bytes'ından Python sunucusuna yükle ─
+    // (kaç şehir/bölge olursa olsun aynı döngü çalışır — hardcoded şehir yok)
+    for (const regionRow of regionRows) {
+      const activeModel = await prisma.modelVersion.findFirst({
+        where: { city: regionRow.city, region: regionRow.region, isActive: true },
+        select: {
+          id: true, name: true, weights: true, filePath: true,
+          numNodes: true, lag: true, horizon: true, scalerMean: true, scalerStd: true,
+        },
+      })
+      if (!activeModel) continue
       const loadResult = await pythonModel.loadModelFromBytes({
+        region: regionRow.region,
         weights: activeModel.weights,
         filePath: activeModel.filePath,
         numNodes: activeModel.numNodes,
@@ -181,8 +193,10 @@ async function startup(): Promise<void> {
         horizon: activeModel.horizon,
         scalerMean: activeModel.scalerMean,
         scalerStd: activeModel.scalerStd,
+        nodeMap: (regionRow.nodeMap as NodeMap | null) ?? undefined,
+        graphEdges: (regionRow.graphEdges as GraphEdges | null) ?? undefined,
       })
-      console.info(`🤖 Model yükleme (${activeModel.name}): ${loadResult.message}`)
+      console.info(`🤖 Model yükleme (${regionRow.region}/${activeModel.name}): ${loadResult.message}`)
     }
 
     // Model startup event
@@ -192,10 +206,10 @@ async function startup(): Promise<void> {
     
     // DB kapalıysa bile sistemin çalışabilmesi için varsayılan bölgeleri memory'e yükle
     const defaultRegions = [
-      { city: 'kayseri', region: 'ildem', bolgeAdi: '\u0130LDEM', junctionIds: [89, 187, 95, 121, 184, 188, 117, 192, 194], useModel: true, description: 'İldem (AFDGCN)' },
-      { city: 'kayseri', region: 'tuna', bolgeAdi: 'TUNA', junctionIds: [5, 3, 87, 25, 26, 27, 7], useModel: false, description: 'Tuna (Moving Average)' },
-      { city: 'kayseri', region: 'kizilirmak', bolgeAdi: 'KIZILIRMAK', junctionIds: [130, 38, 176], useModel: false, description: 'Kızılırmak (Moving Average)' },
-      { city: 'sivas', region: 'merkez', bolgeAdi: '', junctionIds: [2, 9], useModel: false, description: 'Sivas Şehir Merkezi (Canlı Sayaç Verisi - Moving Average)' },
+      { city: 'kayseri', region: 'ildem', bolgeAdi: '\u0130LDEM', junctionIds: [89, 187, 95, 121, 184, 188, 117, 192, 194], useModel: true, nodeMap: KAYSERI_ILDEM_NODE_MAP as NodeMap | undefined, graphEdges: KAYSERI_ILDEM_GRAPH_EDGES as GraphEdges | undefined, description: 'İldem (AFDGCN)' },
+      { city: 'kayseri', region: 'tuna', bolgeAdi: 'TUNA', junctionIds: [5, 3, 87, 25, 26, 27, 7], useModel: false, nodeMap: undefined as NodeMap | undefined, graphEdges: undefined as GraphEdges | undefined, description: 'Tuna (Moving Average)' },
+      { city: 'kayseri', region: 'kizilirmak', bolgeAdi: 'KIZILIRMAK', junctionIds: [130, 38, 176], useModel: false, nodeMap: undefined as NodeMap | undefined, graphEdges: undefined as GraphEdges | undefined, description: 'Kızılırmak (Moving Average)' },
+      { city: 'sivas', region: 'merkez', bolgeAdi: '', junctionIds: [9, 3, 90001, 90002, 90003], useModel: true, nodeMap: SIVAS_MERKEZ_NODE_MAP as NodeMap | undefined, graphEdges: SIVAS_MERKEZ_GRAPH_EDGES as GraphEdges | undefined, description: 'Sivas Merkez (AFDGCN)' },
     ]
     loadRegionConfigs(defaultRegions)
     console.info('✅ Varsayılan bölge konfigürasyonları yüklendi (Fallback)')

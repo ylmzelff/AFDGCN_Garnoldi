@@ -75,8 +75,9 @@ export const getRegionConfigs = async (req: Request, res: Response): Promise<voi
 }
 
 export const upsertRegionConfig = async (req: Request, res: Response): Promise<void> => {
-  const { city, region, description, junctionIds, useModel, bolgeAdi } = req.body as {
+  const { city, region, description, junctionIds, useModel, bolgeAdi, nodeMap, graphEdges } = req.body as {
     city?: string; region?: string; description?: string; junctionIds?: number[]; useModel?: boolean; bolgeAdi?: string
+    nodeMap?: Record<number, Record<string, number>>; graphEdges?: Array<[number, number] | [number, number, number]>
   }
   if (!city || !region || !Array.isArray(junctionIds)) {
     res.status(400).json({ error: true, code: 'VALIDATION', message: 'city, region, junctionIds (array) gerekli.' })
@@ -84,10 +85,21 @@ export const upsertRegionConfig = async (req: Request, res: Response): Promise<v
   }
   const conf = await prisma.regionConfig.upsert({
     where: { city_region: { city, region } },
-    update: { description: description ?? '', junctionIds, useModel: useModel ?? false },
-    create: { city, region, description: description ?? '', junctionIds, useModel: useModel ?? false },
+    update: {
+      description: description ?? '', junctionIds, useModel: useModel ?? false,
+      ...(nodeMap !== undefined ? { nodeMap } : {}),
+      ...(graphEdges !== undefined ? { graphEdges } : {}),
+    },
+    create: {
+      city, region, description: description ?? '', junctionIds, useModel: useModel ?? false,
+      nodeMap: nodeMap ?? undefined, graphEdges: graphEdges ?? undefined,
+    },
   })
-  REGION_CONFIG[region] = { city, junctionIds, useModel: useModel ?? false, description: description ?? '', bolgeAdi: bolgeAdi ?? '' }
+  REGION_CONFIG[region] = {
+    city, junctionIds, useModel: useModel ?? false, description: description ?? '', bolgeAdi: bolgeAdi ?? '',
+    nodeMap: nodeMap ?? REGION_CONFIG[region]?.nodeMap,
+    graphEdges: graphEdges ?? REGION_CONFIG[region]?.graphEdges,
+  }
   res.json(conf)
 }
 
@@ -170,7 +182,12 @@ export const activateModelVersion = async (req: Request, res: Response): Promise
     res.status(404).json({ error: true, code: 'NOT_FOUND', message: `Model versiyonu '${id}' bulunamadı.` })
     return
   }
+  const regionConf = await prisma.regionConfig.findUnique({
+    where: { city_region: { city: version.city, region: version.region } },
+    select: { nodeMap: true, graphEdges: true },
+  })
   const loadResult = await pythonModel.loadModelFromBytes({
+    region: version.region,
     weights: version.weights,
     filePath: version.filePath,
     numNodes: version.numNodes,
@@ -178,6 +195,8 @@ export const activateModelVersion = async (req: Request, res: Response): Promise
     horizon: version.horizon,
     scalerMean: version.scalerMean,
     scalerStd: version.scalerStd,
+    nodeMap: (regionConf?.nodeMap as Record<number, Record<string, number>> | null) ?? undefined,
+    graphEdges: (regionConf?.graphEdges as Array<[number, number]> | null) ?? undefined,
   })
   if (!loadResult.success) {
     res.status(500).json({ error: true, code: 'MODEL_LOAD_FAILED', message: loadResult.message })

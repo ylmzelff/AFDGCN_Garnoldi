@@ -37,8 +37,8 @@ export const JUNCTION_DISPLAY: Record<string, JunctionMeta> = {
   'kayseri:27':  { name: 'Tuna 27',    arms: ['A', 'B', 'C', 'D'] },
   'kayseri:87':  { name: 'Tuna 87',    arms: ['A', 'B', 'C', 'D'] },
   // ── Merkez (Sivas) ─────────────────────────────────────────────────────────
-  'sivas:2': { name: 'Köy Hizmetleri', arms: ['Tapu Önü', 'Abdulvahabigazi Geliş'] },
-  'sivas:9': { name: 'TSO', arms: ['Universite->4 İşletme', '4 İşletme->Üniversite', '4 İşletme->Kültür Müdürlüğü', 'Kültür Müdürlüğü->Üniversite'] },
+  'sivas:9': { name: 'TSO', arms: ['A', 'B', 'D'] },
+  'sivas:3': { name: 'Evciler', arms: ['A', 'B'] },
 }
 
 export function junctionName(city: string, id: number): string {

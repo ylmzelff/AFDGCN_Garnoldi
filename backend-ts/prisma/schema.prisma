@@ -81,6 +81,10 @@ model RegionConfig {
   useModel    Boolean  @default(false) @map("use_model")
   isActive    Boolean  @default(true) @map("is_active")
   createdAt   DateTime @default(now()) @map("created_at")
+  /// {junction_id: {arm_letter: node_index}} - AFDGCN model input sirasi
+  nodeMap     Json?    @map("node_map")
+  /// [[from_node, to_node, cost], ...] - adjacency graph kenarlari
+  graphEdges  Json?    @map("graph_edges")
 
   @@unique([city, region])
   @@index([city])
