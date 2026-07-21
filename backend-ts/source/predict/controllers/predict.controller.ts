@@ -3,27 +3,6 @@ import { realTimePredictor, kayseriClient, sivasClient, pythonModel, clients } f
 import { REGION_CONFIG } from '../services/real-time-predictor.service'
 import { logPrediction } from '../../common/services/db-logger.service'
 
-export const predictDayAhead = async (req: Request, res: Response): Promise<void> => {
-  const region = String(req.query['region'] ?? '').toLowerCase().trim()
-  const date = String(req.query['date'] ?? '').trim()
-
-  if (!REGION_CONFIG[region]) {
-    res.status(400).json({ error: true, code: 'REGION_NOT_FOUND', message: `Bilinmeyen bolge: ${region}` })
-    return
-  }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    res.status(400).json({ error: true, code: 'INVALID_DATE', message: 'date parametresi YYYY-MM-DD formatinda olmali' })
-    return
-  }
-
-  try {
-    const result = await realTimePredictor.predictDayAhead(region, date)
-    res.json(result)
-  } catch (err) {
-    res.error(err)
-  }
-}
-
 export const predictRegion = async (req: Request, res: Response): Promise<void> => {
   const region = String(req.params['region'] ?? '').toLowerCase().trim()
 

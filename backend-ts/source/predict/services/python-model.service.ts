@@ -104,36 +104,6 @@ export class PythonModelService {
     }
   }
 
-  /**
-   * Bir onceki gunun gercek verisini tohum alarak bir sonraki gun icin
-   * tum 144 slot otoregresif tahmin uretir.
-   */
-  async predictDayAhead(
-    seedDataByJunction: Record<number, ArmData[]>,
-    seedCompletedIdx = 143,
-  ): Promise<{ series: Record<number, Record<string, number[]>>; source: 'AFDGCN' | 'moving_average' } | null> {
-    if (!this.available && Date.now() - this.lastCheckAt < this.CHECK_COOLDOWN_MS) {
-      return null
-    }
-    try {
-      const resp = await this.http.post<{ prediction_series: Record<number, Record<string, number[]>>; source: string }>(
-        '/predict/day-ahead',
-        { seed_data_by_junction: seedDataByJunction, seed_completed_idx: seedCompletedIdx },
-        { timeout: 120_000 },
-      )
-      this.available = true
-      return {
-        series: resp.data.prediction_series,
-        source: resp.data.source as 'AFDGCN' | 'moving_average',
-      }
-    } catch {
-      this.available = false
-      this.lastCheckAt = Date.now()
-      console.warn('[python-model] /predict/day-ahead ulasilamiyor')
-      return null
-    }
-  }
-
   async getModelStatus(): Promise<Record<string, unknown>> {
     try {
       const resp = await this.http.get<Record<string, unknown>>('/model/status', { timeout: 5000 })

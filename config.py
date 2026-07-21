@@ -1,28 +1,22 @@
 import argparse
 import configparser
-import os
-
-_BASE = os.path.dirname(os.path.abspath(__file__))
 
 # *****************************************  参数初始化配置 ****************************************** #
 Mode = 'train'
 DEBUG = 'True'
 #DATASET = 'Kcetas'
 #DATASET = 'PEMS04'
-#DATASET = 'PEMS08'
 #DATASET = 'Konya'
 #DATASET = 'Kayseri'
 DATASET = 'Sivas'
 DEVICE = 'cuda:0'
 #DEVICE = 'cpu'
 MODEL = 'AFDGCN'
-GRAPH = os.path.join(_BASE, "data", "Sivas", "directed_sivas.csv")
-#GRAPH = "/content/AFDGCN_Garnoldi/data/Kayseri/directed_graph_edges.csv"
-#GRAPH = "/content/AFDGCN_Garnoldi/data/Kayseri/graph_ildem.csv"
+#GRAPH = "/content/AFDGCN_Garnoldi/data/Kayseri/kayseri_kavsaklar.csv"
+GRAPH = "data/Sivas/directed_sivas.csv"
 #GRAPH = "/content/AFDGCN_Garnoldi/data/Konya/konya_kavşaklar.csv"
 #GRAPH = "/content/AFDGCN_Garnoldi/data/Kcetas/conn_graph.csv"
 #GRAPH = "./data/PEMS04/PEMS04.csv"
-#GRAPH = "./data/PEMS08/PEMS08.csv"
 K = 0.1
 ALGO_OPTIONS = ['default', 'Garnoldi', 'APPNP', 'GPRGNN']
 ALGO = ALGO_OPTIONS[1]
@@ -30,7 +24,7 @@ ALGO = ALGO_OPTIONS[1]
 FILENAME_ID = None
 
 # 1. get configuration
-config_file = os.path.join(_BASE, 'conf', '{}_{}.conf'.format(DATASET, MODEL))
+config_file = 'conf/Sivas_AFDGCN.conf'
 print(config_file)
 config = configparser.ConfigParser()
 config.read(config_file)
@@ -53,7 +47,6 @@ args.add_argument('--lag', default=config['data']['lag'], type=int)
 args.add_argument('--horizon', default=config['data']['horizon'], type=int)
 args.add_argument('--num_nodes', default=config['data']['num_nodes'], type=int)
 args.add_argument('--tod', default=config['data']['tod'], type=eval)
-args.add_argument('--dow', default=False, type=eval)
 args.add_argument('--normalizer', default=config['data']['normalizer'], type=str)
 args.add_argument('--default_graph', default=config['data']['default_graph'], type=eval)
 # 4. train
@@ -69,6 +62,7 @@ args.add_argument('--early_stop', default=config['train']['early_stop'], type=ev
 args.add_argument('--early_stop_patience', default=config['train']['early_stop_patience'], type=int)
 args.add_argument('--grad_norm', default=config['train']['grad_norm'], type=eval)
 args.add_argument('--max_grad_norm', default=config['train']['max_grad_norm'], type=int)
+args.add_argument('--teacher_forcing', default=False, type=bool)
 args.add_argument('--real_value', default=config['train']['real_value'], type=eval)
 # 6. test
 args.add_argument('--mae_thresh', default=config['test']['mae_thresh'], type=eval)
@@ -77,5 +71,5 @@ args.add_argument('--mape_thresh', default=config['test']['mape_thresh'], type=f
 # 7. log
 args.add_argument('--log_dir', default='./', type=str)
 args.add_argument("--checkpoint", type=str, default="./save_model/", help="pre-trained model file")
-args, _unknown = args.parse_known_args()
+args = args.parse_args()
 # *****************************************  参数初始化配置 ****************************************** #

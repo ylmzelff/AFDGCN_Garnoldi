@@ -167,19 +167,16 @@ train_loader, val_loader, test_loader, scaler = get_dataloader(args,
                                                                single=False)
 print("train loader ",len(train_loader))
 # *****************************************  初始化模型参数 ****************************************** #
-# input_dim: flow(1) + tod(2 if True) + dow(2 if True)
-input_dim = 1 + (2 if args.tod else 0) + (2 if getattr(args, 'dow', False) else 0)
-args.input_dim = input_dim  # engine.py checkpoint'e kaydedecek
+input_dim = 1
 hidden_dim = 64
 output_dim = 1
 embed_dim = 16
 cheb_k = 2
-horizon = args.horizon
+horizon = 1
 num_layers = 1
 heads = 4
-timesteps = args.lag
+timesteps = 1
 kernel_size = 5
-print(f"Model: input_dim={input_dim}, timesteps={timesteps}, horizon={horizon}")
 model = Network(num_node = args.num_nodes,
                 input_dim = input_dim,
                 hidden_dim = hidden_dim,

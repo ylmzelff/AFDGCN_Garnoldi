@@ -48,15 +48,14 @@ class Engine(object):
         total_rmse = 0
         total_mape = 0
         for batch_idx, (data, target) in enumerate(self.train_loader):
-            # data:  (B, T, N, D)      — flow + temporal features
-            # label: (B, horizon, N)   — sadece flow, model ciktisiyla ayni sekil
-            label = target[..., 0].to(data.device)
+            data = data[..., :1]
+            label = target[..., :1].to(data.device)    # (..., 1)
+            # data and target shape: B, T, N, F; output shape: B, T, N, F
             self.optimizer.zero_grad()
-            output = self.model(data)
-            output = output.to(label.device)
+            output = self.model(data)#afdgcn forward 
             if self.args.real_value:
-                output = self.scaler.inverse_transform(output)
                 label = self.scaler.inverse_transform(label)
+            output = output.to(label.device)
 
             loss = self.loss(output, label)
             mae = torch.abs(output - label).mean()
@@ -96,13 +95,17 @@ class Engine(object):
         results = { 'Output': []}
         with torch.no_grad():
             for batch_idx, (data, target) in enumerate(val_dataloader):
-                label = target[..., 0].to(data.device)
-                output = self.model(data)  # val/test: ogretmen zorlama yok
+                data = data[..., :1]
+                label = target[..., :1].to(data.device) 
+                output = self.model(data)
+                #print("label:")
+                #print(label.shape)
+                #print("output: ")
+                #print(output.shape)
                 y_true.append(label)
                 y_pred.append(output)
                 output = output.to(label.device)
                 if self.args.real_value:
-                    output = self.scaler.inverse_transform(output)
                     label = self.scaler.inverse_transform(label)
                 loss = self.loss(output, label)
                 mae = torch.abs(output - label).mean()
@@ -185,23 +188,11 @@ class Engine(object):
                     self.logger.info("Validation performance didn\'t improve for {} epochs. "
                                     "Training stops.".format(self.args.early_stop_patience))
                     break
-            # save the best state
-            if best_state:
+            # save the best state  if best_state == True:
+            if True:
                 self.logger.info('Current best model saved!')
                 best_model = copy.deepcopy(self.model.state_dict())
-                _scaler_mean = float(self.scaler.mean) if hasattr(self.scaler, 'mean') else None
-                _scaler_std = float(self.scaler.std) if hasattr(self.scaler, 'std') else None
-                checkpoint = {'state_dict': best_model}
-                if _scaler_mean is not None:
-                    checkpoint['scaler_mean'] = _scaler_mean
-                if _scaler_std is not None:
-                    checkpoint['scaler_std'] = _scaler_std
-                # Model meta-verisi: inference sirasinda dogru input_dim ve tod bilgisi
-                checkpoint['input_dim'] = getattr(self.args, 'input_dim', 1)
-                checkpoint['tod_enabled'] = getattr(self.args, 'tod', False)
-                # Model her zaman normalized deger uretir; real_value sadece loss hesabini etkiler
-                best_model['real_value_output'] = False
-                torch.save(checkpoint, self.best_path)
+                torch.save(best_model, self.best_path)
 
         with open('mae_values.csv', 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
@@ -217,9 +208,8 @@ class Engine(object):
         # save the best model to file
         self.logger.info("Saving current best model to " + self.best_path)
 
-        # test (real_value_output metadata anahtarini cikar, load_state_dict bunu kabul etmez)
-        weights_only = {k: v for k, v in best_model.items() if k != 'real_value_output'}
-        self.model.load_state_dict(weights_only)
+        # test
+        self.model.load_state_dict(best_model)
         self.test(self.model, self.args, self.test_loader, self.scaler, self.logger)
 
 
@@ -236,13 +226,9 @@ class Engine(object):
     @staticmethod
     def test(model, args, data_loader, scaler, logger,path=None):
         if path != None:
-            check_point = torch.load(path, map_location=args.device)
-            if isinstance(check_point, dict) and 'state_dict' in check_point:
-                state_dict = check_point['state_dict']
-                if 'config' in check_point:
-                    args = check_point['config']
-            else:
-                state_dict = check_point
+            check_point = torch.load(path)
+            state_dict = check_point['state_dict']
+            args = check_point['config']
             model.load_state_dict(state_dict)
             model.to(args.device)
         model.eval()
@@ -252,8 +238,8 @@ class Engine(object):
         real_flow = {'Target': []}
         with torch.no_grad():
             for batch_idx, (data, target) in enumerate(data_loader):
-                data = data.to(args.device)
-                label = target[..., 0].to(args.device)
+                data = data[..., :1].to(args.device)
+                label = target[..., :1].to(args.device)
                 output = model(data)
                 #results['Input'].extend(data.cpu().numpy())
                 real_flow['Target'].extend(label.cpu().numpy())
@@ -263,22 +249,71 @@ class Engine(object):
        
         y_true = scaler.inverse_transform(torch.cat(y_true, dim=0)).to(args.device)
         if args.real_value:
-            y_pred = torch.cat(y_pred, dim=0).to(args.device)
+            y_pred = torch.cat(y_pred, dim=0).to(args.device).to(args.device)
         else:
             y_pred = scaler.inverse_transform(torch.cat(y_pred, dim=0)).to(args.device)
         print(y_true.cpu().numpy().shape)
         # np.save('./NewNet_{}_true.npy'.format(args.dataset), y_true.cpu().numpy())
         # np.save('./NewNet_{}_pred.npy'.format(args.dataset), y_pred.cpu().numpy())
         print(y_true.shape)
-        
-        # Convert tensors to numpy arrays explicitly
-        y_true_numpy = y_true.detach().cpu().numpy().flatten()
-        y_pred_numpy = y_pred.detach().cpu().numpy().flatten()
-        
-        df_real_denormalized = pd.DataFrame({'Target': y_true_numpy})
-        df_results_denormalized = pd.DataFrame({'Output': y_pred_numpy})
+        # Save flattened format (original)
+        df_real_denormalized = pd.DataFrame({
+            'Target': y_true.detach().cpu().numpy().reshape(-1)
+       })
+
+        df_results_denormalized = pd.DataFrame({ 
+            'Output': y_pred.detach().cpu().numpy().reshape(-1)
+        })
         df_real_denormalized.to_csv('real_flow.csv', index=False)
         df_results_denormalized.to_csv('test_results.csv', index=False)
+        
+        # NEW: Save structured format for plotting
+        # y_pred shape: (samples=575, horizons=1, nodes=15, features=1)
+        # y_true shape: (samples=575, horizons=1, nodes=15, features=1)
+        timesteps_struct = []
+        locations_struct = []
+        flows_pred_struct = []
+        flows_true_struct = []
+        occupies_struct = []
+        speeds_struct = []
+        
+        for sample_idx in range(y_pred.shape[0]):
+            for node_idx in range(y_pred.shape[2]):  # nodes = 15
+                timestep = sample_idx + 1
+                location = node_idx
+                flow_pred = float(y_pred[sample_idx, 0, node_idx, 0].cpu().numpy())
+                flow_true = float(y_true[sample_idx, 0, node_idx, 0].cpu().numpy())
+                
+                timesteps_struct.append(timestep)
+                locations_struct.append(location)
+                flows_pred_struct.append(flow_pred)
+                flows_true_struct.append(flow_true)
+                occupies_struct.append(1)
+                speeds_struct.append(1)
+        
+        # Save structured predictions
+        df_pred_structured = pd.DataFrame({
+            'timestep': timesteps_struct,
+            'location': locations_struct,
+            'flow': flows_pred_struct,
+            'occupy': occupies_struct,
+            'speed': speeds_struct
+        })
+        df_pred_structured.to_csv('test_gar.csv', index=False)
+        
+        # Save structured real data
+        df_real_structured = pd.DataFrame({
+            'timestep': timesteps_struct,
+            'location': locations_struct,
+            'flow': flows_true_struct,
+            'occupy': occupies_struct,
+            'speed': speeds_struct
+        })
+        df_real_structured.to_csv('real_flow_gar.csv', index=False)
+        
+        print(f"✅ Structured output saved: test_gar.csv with {len(df_pred_structured)} rows")
+        print(f"✅ Structured real data saved: real_flow_gar.csv with {len(df_real_structured)} rows")
+        print(f"📊 Data spans {df_pred_structured['timestep'].max()} timesteps × {df_pred_structured['location'].nunique()} locations")
         for t in range(y_true.shape[1]):
             mae, rmse, mape = All_Metrics(y_pred[:, t, ...], y_true[:, t, ...], args.mae_thresh, args.rmse_thresh, args.mape_thresh)
             #print(y_pred.cpu().numpy().shape)

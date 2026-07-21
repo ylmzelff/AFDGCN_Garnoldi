@@ -7,36 +7,6 @@ from lib.load_dataset import load_st_dataset
 from lib.normalization import NScaler, MinMax01Scaler, MinMax11Scaler, StandardScaler
 warnings.filterwarnings('ignore')
 
-SLOTS_PER_DAY = 144  # 10-dakikalik araliklar, 24*6=144
-
-def add_temporal_features(data, tod=False, dow=False):
-    """
-    Normalize edilmis (T, N, D) verisine sin/cos zamansal ozellikler ekler.
-    tod=True: gunun saati (slot 0-143 -> sin/cos)  → D += 2
-    dow=True: haftanin gunu (gun 0-6  -> sin/cos)  → D += 2
-    Sin/cos encoding zaten [-1,1] araliginda, ek normalizasyon gerekmez.
-    """
-    T, N, _ = data.shape
-    features = [data]
-
-    if tod:
-        slot_idx = np.arange(T) % SLOTS_PER_DAY
-        sin_tod = np.sin(2 * np.pi * slot_idx / SLOTS_PER_DAY).astype(np.float32)
-        cos_tod = np.cos(2 * np.pi * slot_idx / SLOTS_PER_DAY).astype(np.float32)
-        features.append(np.tile(sin_tod[:, None, None], (1, N, 1)))
-        features.append(np.tile(cos_tod[:, None, None], (1, N, 1)))
-
-    if dow:
-        day_idx = (np.arange(T) // SLOTS_PER_DAY) % 7
-        sin_dow = np.sin(2 * np.pi * day_idx / 7).astype(np.float32)
-        cos_dow = np.cos(2 * np.pi * day_idx / 7).astype(np.float32)
-        features.append(np.tile(sin_dow[:, None, None], (1, N, 1)))
-        features.append(np.tile(cos_dow[:, None, None], (1, N, 1)))
-
-    result = np.concatenate(features, axis=-1)
-    print(f'Temporal features added: tod={tod}, dow={dow} | shape {data.shape} -> {result.shape}')
-    return result
-
 def normalize_dataset(data, normalizer):
     if normalizer == 'max01':
         minimum = data.min()
@@ -73,8 +43,6 @@ def split_data_by_days(data, val_days, test_days, interval=60):
     :return:
     '''
     T = int((24*60) / interval)
-    test_days = int(test_days)
-    val_days  = int(val_days)
     test_data = data[-T * test_days:]
     val_data = data[-T * (test_days + val_days): -T * test_days]
     train_data = data[:-T * (test_days + val_days)]
@@ -103,16 +71,12 @@ def get_dataloader(args, normalizer = 'std', tod=False, dow=False, weather=False
     data = load_st_dataset(args.dataset)        # B, N, D
     # 2.数据归일화처리 (sadece flow feature'ini normalize et)
     data, scaler = normalize_dataset(data, normalizer)
-    # 3. Zamansal ozellikler (normalize edilmis akis + sin/cos zamansal kodlama)
-    if tod or dow:
-        data = add_temporal_features(data, tod=tod, dow=dow)
-    # 4.数据集划分(训练集、验证集、测试集)
+    # 3.数据集划分(训练集、验证集、测试集)
     if args.test_ratio > 1:
-        # interval=10: verimiz 10 dakikalik aralikli (144 slot/gun)
-        data_train, data_val, data_test = split_data_by_days(data, args.val_ratio, args.test_ratio, interval=10)
+        data_train, data_val, data_test = split_data_by_days(data, args.val_ratio, args.test_ratio)
     else:
         data_train, data_val, data_test = split_data_by_ratio(data, args.val_ratio, args.test_ratio)
-    # 5.滑动窗口采样
+    # 4.滑动窗口采样
     x_tra, y_tra = Add_Window_Horizon(data_train, args.lag, args.horizon, single)
     x_val, y_val = Add_Window_Horizon(data_val, args.lag, args.horizon, single)
     x_test, y_test = Add_Window_Horizon(data_test, args.lag, args.horizon, single)
