@@ -22,15 +22,32 @@ const ARM_NAMES = ARM_DISPLAY_NAMES
 // Yardımcı Fonksiyonlar
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Belediye API'leri saat anahtarlarını ("0".."23") Türkiye yerel saatiyle döner.
+ * Sunucu farklı bir saat diliminde (ör. HF Spaces container'ı UTC) çalışabildiği
+ * için `Date.getHours()` yerine her zaman Europe/Istanbul'a göre hesaplanır.
+ */
+function nowInIstanbul(): { hours: number; minutes: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Istanbul',
+    hour: 'numeric',
+    minute: 'numeric',
+    hourCycle: 'h23',
+  }).formatToParts(new Date())
+  const hours = Number(parts.find((p) => p.type === 'hour')?.value ?? 0)
+  const minutes = Number(parts.find((p) => p.type === 'minute')?.value ?? 0)
+  return { hours, minutes }
+}
+
 function minuteIndexNow(slotMinutes: number): number {
-  const now = new Date()
-  return now.getHours() * (60 / slotMinutes) + Math.floor(now.getMinutes() / slotMinutes)
+  const { hours, minutes } = nowInIstanbul()
+  return hours * (60 / slotMinutes) + Math.floor(minutes / slotMinutes)
 }
 
 function timeLabelNow(slotMinutes: number): string {
-  const now = new Date()
-  const slotMinute = Math.floor(now.getMinutes() / slotMinutes) * slotMinutes
-  return `${String(now.getHours()).padStart(2, '0')}:${String(slotMinute).padStart(2, '0')}`
+  const { hours, minutes } = nowInIstanbul()
+  const slotMinute = Math.floor(minutes / slotMinutes) * slotMinutes
+  return `${String(hours).padStart(2, '0')}:${String(slotMinute).padStart(2, '0')}`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

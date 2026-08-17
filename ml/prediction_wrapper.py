@@ -162,7 +162,10 @@ def _build_net_from_state_dict(
 
 def _try_load(path: Path, num_nodes: int, lag_default: int, horizon_default: int, edges: Sequence[GraphEdge]):
     """Verilen .pth dosyasından AFDGCN Model yüklemeyi dener."""
-    raw = torch.load(path, map_location="cpu", weights_only=True)
+    # weights_only=False: checkpoint'ler yerelde farklı bir torch sürümüyle
+    # kaydediliyor, güvenli unpickler bazı sürümlerde okuyamayabiliyor.
+    # Dosyalar yalnızca admin panelinden (kendi eğittiğimiz) yüklendiği için güvenli.
+    raw = torch.load(path, map_location="cpu", weights_only=False)
     state_dict, ckpt_mean, ckpt_std = _load_state_dict_payload(raw)
     result = _build_net_from_state_dict(state_dict, num_nodes, lag_default, horizon_default, edges)
     if result is None:
@@ -179,7 +182,7 @@ def _try_load_from_bytes(data: bytes, num_nodes: int, lag_default: int, horizon_
     import io
 
     buf = io.BytesIO(data)
-    raw = torch.load(buf, map_location="cpu", weights_only=True)
+    raw = torch.load(buf, map_location="cpu", weights_only=False)
     state_dict, ckpt_mean, ckpt_std = _load_state_dict_payload(raw)
     result = _build_net_from_state_dict(state_dict, num_nodes, lag_default, horizon_default, edges)
     if result is None:

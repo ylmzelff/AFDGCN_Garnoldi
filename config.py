@@ -73,5 +73,5 @@ args.add_argument('--mape_thresh', default=config['test']['mape_thresh'], type=f
 # 7. log
 args.add_argument('--log_dir', default='./', type=str)
 args.add_argument("--checkpoint", type=str, default="./save_model/", help="pre-trained model file")
-args = args.parse_args()
+args = args.parse_args([])  # sys.argv okunmaz — uvicorn/pytest gibi baglamlarda kendi flag'leriyle celismesin
 # *****************************************  参数初始化配置 ****************************************** #

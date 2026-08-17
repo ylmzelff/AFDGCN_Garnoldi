@@ -13,8 +13,17 @@ export function isDbEnabled(): boolean {
 }
 
 function minuteIndex(): number {
-  const now = new Date()
-  return now.getHours() * 6 + Math.floor(now.getMinutes() / 10)
+  // Sunucu saat dilimi ne olursa olsun (ör. HF Spaces container'ı UTC) Türkiye
+  // yerel saatine göre hesaplanır — belediye API'lerinin saat anahtarlarıyla tutarlı olsun diye.
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Istanbul',
+    hour: 'numeric',
+    minute: 'numeric',
+    hourCycle: 'h23',
+  }).formatToParts(new Date())
+  const hours = Number(parts.find((p) => p.type === 'hour')?.value ?? 0)
+  const minutes = Number(parts.find((p) => p.type === 'minute')?.value ?? 0)
+  return hours * 6 + Math.floor(minutes / 10)
 }
 
 export async function logPrediction(response: RegionPhaseResponse | RegionPredictionResult): Promise<void> {
