@@ -43,6 +43,39 @@ export const REGION_LANE_CONFIGS: Record<string, Record<number, Record<string, n
 
 const DEFAULT_LANES = 2
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Kavşak Bazlı Faz Ayarları (DB'den yüklenen override'lar)
+// Kayıt yoksa yukarıdaki sabitler + REGION_LANE_CONFIGS/DEFAULT_LANES kullanılır.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface JunctionPhaseConfigItem {
+  city: string
+  region: string
+  junctionId: number
+  lanes: Record<string, number>
+  fixedYellow: number
+  fixedProtection: number
+  minGreen: number
+  cycleMin: number
+  cycleMax: number
+  threshLow: number
+  threshHigh: number
+}
+
+export const PHASE_CONFIG_OVERRIDES: Record<string, JunctionPhaseConfigItem> = {}
+
+function phaseConfigKey(region: string, junctionId: number): string {
+  return `${region}:${junctionId}`
+}
+
+/** server.ts başlangıcında DB'den yüklenen tüm override'ları belleğe alır. */
+export function loadPhaseConfigOverrides(rows: JunctionPhaseConfigItem[]): void {
+  for (const key of Object.keys(PHASE_CONFIG_OVERRIDES)) delete PHASE_CONFIG_OVERRIDES[key]
+  for (const r of rows) {
+    PHASE_CONFIG_OVERRIDES[phaseConfigKey(r.region, r.junctionId)] = r
+  }
+}
+
 export const JUNCTION_NAMES: Record<number, string> = {
   89: 'Gesi', 187: 'Serkent', 95: 'Beyazşehir', 121: 'Toki',
   184: 'İldem 1', 188: 'İldem 2', 117: 'İldem 3',
@@ -93,8 +126,17 @@ export class PhaseCalculatorService {
     armCounts: Record<string, number>,
     region: string = 'ildem',
   ): JunctionPhaseData {
+    const override = PHASE_CONFIG_OVERRIDES[phaseConfigKey(region, junctionId)]
+    const fixedYellow = override?.fixedYellow ?? FIXED_YELLOW
+    const fixedProtection = override?.fixedProtection ?? FIXED_PROTECTION
+    const minGreen = override?.minGreen ?? MIN_GREEN
+    const cycleMin = override?.cycleMin ?? CYCLE_MIN
+    const cycleMax = override?.cycleMax ?? CYCLE_MAX
+    const threshLow = override?.threshLow ?? THRESH_LOW
+    const threshHigh = override?.threshHigh ?? THRESH_HIGH
+
     const baseCfg: Record<string, number> =
-      (REGION_LANE_CONFIGS[region] ?? {})[junctionId] ?? {}
+      override?.lanes ?? (REGION_LANE_CONFIGS[region] ?? {})[junctionId] ?? {}
     const armDisplayNames = ARM_DISPLAY_NAMES[junctionId] ?? {}
 
     const laneCfg: Record<string, number> = {}
@@ -117,30 +159,46 @@ export class PhaseCalculatorService {
     }
 
     if (phases.length === 0) {
-      return { _cycle_time: CYCLE_MIN, _total_vehicles: 0 }
+      return { _cycle_time: cycleMin, _total_vehicles: 0 }
     }
 
     const totalLoad = phases.reduce((s, p) => s + p.load, 0)
     const totalVehs = phases.reduce((s, p) => s + p.count, 0)
     const n = phases.length
 
+    // Döngü süresi yüke göre [cycleMin, cycleMax] arasında değişir, ama asla
+    // cycleMax'ı aşmaz — kullanıcının seçtiği üst sınır kesindir.
     const loadFactor = Math.min(Math.max((totalLoad - 50.0) / (1500.0 - 50.0), 0), 1)
-    const cycleTime = Math.round(CYCLE_MIN + loadFactor * (CYCLE_MAX - CYCLE_MIN))
+    let cycleTime = Math.round(cycleMin + loadFactor * (cycleMax - cycleMin))
 
-    const totalLoss = n * (FIXED_YELLOW + FIXED_PROTECTION)
-    const netGreenPool = Math.max(cycleTime - totalLoss, n * MIN_GREEN)
-
-    for (const p of phases) {
-      const share = totalLoad > 0 ? p.load / totalLoad : 1 / n
-      p.green = Math.max(MIN_GREEN, Math.round(share * netGreenPool))
+    const totalLoss = n * (fixedYellow + fixedProtection)
+    // Herkese en az minGreen verebilmek için gerçekte gereken döngü süresi.
+    const idealMinCycle = totalLoss + n * minGreen
+    if (cycleTime < idealMinCycle) {
+      // cycleMax'ı aşmadan, mümkün olduğunca idealMinCycle'a yaklaş.
+      cycleTime = Math.min(idealMinCycle, cycleMax)
     }
 
-    // Correction to ensure sum matches pool
-    const greenSum = phases.reduce((s, p) => s + p.green, 0)
-    const diff = netGreenPool - greenSum
-    if (diff !== 0) {
-      const maxPhase = phases.reduce((a, b) => (b.load > a.load ? b : a))
-      maxPhase.green += diff
+    const netGreenPool = Math.max(cycleTime - totalLoss, 0)
+
+    if (netGreenPool >= n * minGreen) {
+      // Havuz herkese min yeşili verebiliyor — normal orantılı dağıtım.
+      for (const p of phases) {
+        const share = totalLoad > 0 ? p.load / totalLoad : 1 / n
+        p.green = Math.max(minGreen, Math.round(share * netGreenPool))
+      }
+      const greenSum = phases.reduce((s, p) => s + p.green, 0)
+      if (greenSum < netGreenPool) {
+        const maxPhase = phases.reduce((a, b) => (b.load > a.load ? b : a))
+        maxPhase.green += netGreenPool - greenSum
+      }
+    } else {
+      // cycleMax'a rağmen havuz min yeşili karşılayamıyor (aşırı yüklü/imkansız
+      // ayar kombinasyonu) — floor uygulamadan, kalan havuzu orantılı paylaştır.
+      for (const p of phases) {
+        const share = totalLoad > 0 ? p.load / totalLoad : 1 / n
+        p.green = Math.max(1, Math.round(share * netGreenPool))
+      }
     }
 
     const result: JunctionPhaseData = {
@@ -150,17 +208,17 @@ export class PhaseCalculatorService {
 
     for (const p of phases) {
       const green = Math.max(0, p.green)
-      const yellow = FIXED_YELLOW
-      const red = Math.max(0, cycleTime - green - yellow - FIXED_PROTECTION)
+      const yellow = fixedYellow
+      const red = Math.max(0, cycleTime - green - yellow - fixedProtection)
       const status: 'low' | 'medium' | 'high' =
-        p.count < THRESH_LOW ? 'low' : p.count < THRESH_HIGH ? 'medium' : 'high'
+        p.count < threshLow ? 'low' : p.count < threshHigh ? 'medium' : 'high'
 
       result[p.arm] = {
         arm_name: armDisplayNames[p.arm] ?? `Kol ${p.arm}`,
         green,
         yellow,
         red,
-        protection: FIXED_PROTECTION,
+        protection: fixedProtection,
         cycle_time: cycleTime,
         vehicle_count: Math.round(p.count),
         lanes: p.lanes,

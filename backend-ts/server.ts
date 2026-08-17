@@ -17,6 +17,7 @@ import { authService } from './source/auth/services'
 import prisma from './source/database/prisma'
 import { logModelEvent } from './source/common/services/db-logger.service'
 import { loadRegionConfigs } from './source/predict/services/real-time-predictor.service'
+import { loadPhaseConfigOverrides } from './source/phases/services/phase-calculator.service'
 import { KAYSERI_ILDEM_NODE_MAP, KAYSERI_ILDEM_GRAPH_EDGES, SIVAS_MERKEZ_NODE_MAP, SIVAS_MERKEZ_GRAPH_EDGES } from './source/predict/services/region-seed-data'
 import type { NodeMap, GraphEdges } from './source/predict/services/python-model.service'
 
@@ -107,7 +108,6 @@ async function startup(): Promise<void> {
     const defaultRegions = [
       { city: 'kayseri', region: 'ildem', bolgeAdi: '\u0130LDEM', junctionIds: [89, 187, 95, 121, 184, 188, 117, 192, 194], useModel: true, nodeMap: KAYSERI_ILDEM_NODE_MAP as NodeMap | undefined, graphEdges: KAYSERI_ILDEM_GRAPH_EDGES as GraphEdges | undefined, description: 'İldem (AFDGCN)' },
       { city: 'kayseri', region: 'tuna', bolgeAdi: 'TUNA', junctionIds: [5, 3, 87, 25, 26, 27, 7], useModel: false, nodeMap: undefined as NodeMap | undefined, graphEdges: undefined as GraphEdges | undefined, description: 'Tuna (Moving Average)' },
-      { city: 'kayseri', region: 'kizilirmak', bolgeAdi: 'KIZILIRMAK', junctionIds: [130, 38, 176], useModel: false, nodeMap: undefined as NodeMap | undefined, graphEdges: undefined as GraphEdges | undefined, description: 'Kızılırmak (Moving Average)' },
       { city: 'sivas', region: 'merkez', bolgeAdi: '', junctionIds: [9, 3, 90001, 90002, 90003], useModel: true, nodeMap: SIVAS_MERKEZ_NODE_MAP as NodeMap | undefined, graphEdges: SIVAS_MERKEZ_GRAPH_EDGES as GraphEdges | undefined, description: 'Sivas Merkez (AFDGCN)' },
     ]
     for (const r of defaultRegions) {
@@ -133,6 +133,23 @@ async function startup(): Promise<void> {
       nodeMap: r.nodeMap as NodeMap | null,
       graphEdges: r.graphEdges as GraphEdges | null,
     })))
+
+    // ── Kavşak bazlı faz ayarları (sarı süre, min yeşil, şerit sayısı, ...) ──
+    const phaseConfigRows = await prisma.junctionPhaseConfig.findMany()
+    loadPhaseConfigOverrides(phaseConfigRows.map((r) => ({
+      city: r.city,
+      region: r.region,
+      junctionId: r.junctionId,
+      lanes: r.lanes as Record<string, number>,
+      fixedYellow: r.fixedYellow,
+      fixedProtection: r.fixedProtection,
+      minGreen: r.minGreen,
+      cycleMin: r.cycleMin,
+      cycleMax: r.cycleMax,
+      threshLow: r.threshLow,
+      threshHigh: r.threshHigh,
+    })))
+    console.info(`⚙️  ${phaseConfigRows.length} kavşak için özel faz ayarı yüklendi`)
 
     // ── Model versiyon seed ────────────────────────────────────────────────
     // Eğer DB'de model yoksa veya weights null ise disk'teki dummy .pth ile seed et
@@ -208,7 +225,6 @@ async function startup(): Promise<void> {
     const defaultRegions = [
       { city: 'kayseri', region: 'ildem', bolgeAdi: '\u0130LDEM', junctionIds: [89, 187, 95, 121, 184, 188, 117, 192, 194], useModel: true, nodeMap: KAYSERI_ILDEM_NODE_MAP as NodeMap | undefined, graphEdges: KAYSERI_ILDEM_GRAPH_EDGES as GraphEdges | undefined, description: 'İldem (AFDGCN)' },
       { city: 'kayseri', region: 'tuna', bolgeAdi: 'TUNA', junctionIds: [5, 3, 87, 25, 26, 27, 7], useModel: false, nodeMap: undefined as NodeMap | undefined, graphEdges: undefined as GraphEdges | undefined, description: 'Tuna (Moving Average)' },
-      { city: 'kayseri', region: 'kizilirmak', bolgeAdi: 'KIZILIRMAK', junctionIds: [130, 38, 176], useModel: false, nodeMap: undefined as NodeMap | undefined, graphEdges: undefined as GraphEdges | undefined, description: 'Kızılırmak (Moving Average)' },
       { city: 'sivas', region: 'merkez', bolgeAdi: '', junctionIds: [9, 3, 90001, 90002, 90003], useModel: true, nodeMap: SIVAS_MERKEZ_NODE_MAP as NodeMap | undefined, graphEdges: SIVAS_MERKEZ_GRAPH_EDGES as GraphEdges | undefined, description: 'Sivas Merkez (AFDGCN)' },
     ]
     loadRegionConfigs(defaultRegions)

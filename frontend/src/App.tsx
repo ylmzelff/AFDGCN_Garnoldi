@@ -4,6 +4,7 @@ import { useAuthStore } from '@/store/useAuthStore'
 import LoginPage from '@/pages/LoginPage'
 import RegisterPage from '@/pages/RegisterPage'
 import DashboardPage from '@/pages/DashboardPage'
+import PhaseConfigPage from '@/pages/PhaseConfigPage'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -56,6 +57,14 @@ export default function App() {
             element={
               <RequireAuth>
                 <DashboardPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/admin/phase-config"
+            element={
+              <RequireAuth>
+                <PhaseConfigPage />
               </RequireAuth>
             }
           />

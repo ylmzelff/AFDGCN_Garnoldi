@@ -14,6 +14,11 @@ router.get('/region-configs', authMiddleware, AdminController.getRegionConfigs)
 router.put('/region-configs', authMiddleware, AdminController.upsertRegionConfig)
 router.delete('/region-configs/:city/:region', authMiddleware, AdminController.deleteRegionConfig)
 
+// ── Kavşak Bazlı Faz Ayarları ─────────────────────────────────────────────────
+router.get('/phase-configs', authMiddleware, AdminController.getPhaseConfigs)
+router.put('/phase-configs', authMiddleware, AdminController.upsertPhaseConfig)
+router.delete('/phase-configs/:region/:junctionId', authMiddleware, AdminController.deletePhaseConfig)
+
 // ── Model Versiyonları ────────────────────────────────────────────────────────
 router.get('/models', authMiddleware, AdminController.listModelVersions)
 router.post('/models/upload', authMiddleware, AdminController.modelUpload.single('file'), AdminController.uploadModelVersion)

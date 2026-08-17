@@ -2,10 +2,21 @@
 import path from 'path'
 import fs from 'fs'
 import multer from 'multer'
-import { clients, pythonModel } from '../../predict/services'
+import { clients, pythonModel, realTimePredictor } from '../../predict/services'
 import prisma from '../../database/prisma'
 import { appState } from '../../common/services/app-state.service'
 import { loadRegionConfigs, REGION_CONFIG } from '../../predict/services/real-time-predictor.service'
+import {
+  PHASE_CONFIG_OVERRIDES,
+  REGION_LANE_CONFIGS,
+  type JunctionPhaseConfigItem,
+} from '../../phases/services/phase-calculator.service'
+
+const DEFAULT_PHASE_SETTINGS = {
+  fixedYellow: 3, fixedProtection: 6, minGreen: 10, cycleMin: 60, cycleMax: 120,
+  threshLow: 10, threshHigh: 50,
+}
+const DEFAULT_LANES = 2
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Multer — Model dosyası yükleme (memory storage → bytes direkt DB'ye gider)
@@ -113,6 +124,105 @@ export const deleteRegionConfig = async (req: Request, res: Response): Promise<v
   await prisma.regionConfig.delete({ where: { city_region: { city, region } } })
   delete REGION_CONFIG[region]
   res.json({ status: 'deleted', city, region })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Kavşak Bazlı Faz Ayarları (JunctionPhaseConfig)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Bir kavşağın kol harflerini bilinen kaynaklardan çıkarır (nodeMap öncelikli). */
+function armsForJunction(region: string, junctionId: number): string[] {
+  const nodeMap = REGION_CONFIG[region]?.nodeMap
+  const fromNodeMap = nodeMap?.[junctionId]
+  if (fromNodeMap) return Object.keys(fromNodeMap)
+  return ['A', 'B', 'C', 'D']
+}
+
+export const getPhaseConfigs = async (req: Request, res: Response): Promise<void> => {
+  const region = req.query['region'] as string | undefined
+  if (!region) {
+    res.status(400).json({ error: true, code: 'VALIDATION', message: 'region gerekli.' })
+    return
+  }
+  const config = REGION_CONFIG[region]
+  if (!config) {
+    res.status(404).json({ error: true, code: 'NOT_FOUND', message: `'${region}' bölgesi bulunamadı.` })
+    return
+  }
+  const junctionIds = config.junctionIds as number[]
+  const items = junctionIds.map((junctionId) => {
+    const override = PHASE_CONFIG_OVERRIDES[`${region}:${junctionId}`]
+    const arms = armsForJunction(region, junctionId)
+    const baseLanes = REGION_LANE_CONFIGS[region]?.[junctionId] ?? {}
+    const lanes: Record<string, number> = {}
+    for (const arm of arms) lanes[arm] = override?.lanes[arm] ?? baseLanes[arm] ?? DEFAULT_LANES
+    return {
+      city: config.city, region, junctionId,
+      lanes,
+      fixedYellow: override?.fixedYellow ?? DEFAULT_PHASE_SETTINGS.fixedYellow,
+      fixedProtection: override?.fixedProtection ?? DEFAULT_PHASE_SETTINGS.fixedProtection,
+      minGreen: override?.minGreen ?? DEFAULT_PHASE_SETTINGS.minGreen,
+      cycleMin: override?.cycleMin ?? DEFAULT_PHASE_SETTINGS.cycleMin,
+      cycleMax: override?.cycleMax ?? DEFAULT_PHASE_SETTINGS.cycleMax,
+      threshLow: override?.threshLow ?? DEFAULT_PHASE_SETTINGS.threshLow,
+      threshHigh: override?.threshHigh ?? DEFAULT_PHASE_SETTINGS.threshHigh,
+      isCustom: Boolean(override),
+    }
+  })
+  res.json(items)
+}
+
+export const upsertPhaseConfig = async (req: Request, res: Response): Promise<void> => {
+  const {
+    city, region, junctionId, lanes, fixedYellow, fixedProtection,
+    minGreen, cycleMin, cycleMax, threshLow, threshHigh,
+  } = req.body as {
+    city?: string; region?: string; junctionId?: number; lanes?: Record<string, number>
+    fixedYellow?: number; fixedProtection?: number; minGreen?: number
+    cycleMin?: number; cycleMax?: number; threshLow?: number; threshHigh?: number
+  }
+  if (!city || !region || typeof junctionId !== 'number' || !lanes) {
+    res.status(400).json({ error: true, code: 'VALIDATION', message: 'city, region, junctionId, lanes gerekli.' })
+    return
+  }
+  const data = {
+    city, region, junctionId, lanes,
+    fixedYellow: fixedYellow ?? DEFAULT_PHASE_SETTINGS.fixedYellow,
+    fixedProtection: fixedProtection ?? DEFAULT_PHASE_SETTINGS.fixedProtection,
+    minGreen: minGreen ?? DEFAULT_PHASE_SETTINGS.minGreen,
+    cycleMin: cycleMin ?? DEFAULT_PHASE_SETTINGS.cycleMin,
+    cycleMax: cycleMax ?? DEFAULT_PHASE_SETTINGS.cycleMax,
+    threshLow: threshLow ?? DEFAULT_PHASE_SETTINGS.threshLow,
+    threshHigh: threshHigh ?? DEFAULT_PHASE_SETTINGS.threshHigh,
+  }
+  const saved = await prisma.junctionPhaseConfig.upsert({
+    where: { region_junctionId: { region, junctionId } },
+    update: data,
+    create: data,
+  })
+  const item: JunctionPhaseConfigItem = {
+    city: saved.city, region: saved.region, junctionId: saved.junctionId,
+    lanes: saved.lanes as Record<string, number>,
+    fixedYellow: saved.fixedYellow, fixedProtection: saved.fixedProtection, minGreen: saved.minGreen,
+    cycleMin: saved.cycleMin, cycleMax: saved.cycleMax, threshLow: saved.threshLow, threshHigh: saved.threshHigh,
+  }
+  PHASE_CONFIG_OVERRIDES[`${region}:${junctionId}`] = item
+  realTimePredictor.invalidateRegionCache(region)
+  res.json({ ...item, isCustom: true })
+}
+
+export const deletePhaseConfig = async (req: Request, res: Response): Promise<void> => {
+  const { region, junctionId } = req.params as { region: string; junctionId: string }
+  const jid = Number(junctionId)
+  const existing = await prisma.junctionPhaseConfig.findUnique({ where: { region_junctionId: { region, junctionId: jid } } })
+  if (!existing) {
+    res.status(404).json({ error: true, code: 'NOT_FOUND', message: `'${region}/${jid}' için özel ayar bulunamadı.` })
+    return
+  }
+  await prisma.junctionPhaseConfig.delete({ where: { region_junctionId: { region, junctionId: jid } } })
+  delete PHASE_CONFIG_OVERRIDES[`${region}:${jid}`]
+  realTimePredictor.invalidateRegionCache(region)
+  res.json({ status: 'deleted', region, junctionId: jid })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
