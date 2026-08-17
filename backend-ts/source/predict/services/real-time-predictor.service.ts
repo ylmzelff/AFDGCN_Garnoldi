@@ -82,6 +82,10 @@ class PredictionCache {
     this.cache.set(key, { data, timestamp: Date.now() })
   }
 
+  delete(key: string): void {
+    this.cache.delete(key)
+  }
+
   clearExpired(): void {
     const now = Date.now()
     for (const [key, entry] of this.cache.entries()) {
@@ -379,11 +383,125 @@ export class RealTimePredictorService {
     }
   }
 
+  /**
+   * Günün henüz gelmemiş saatleri için AFDGCN tabanlı tam-gün tahmini.
+   * Modeli kendi çıktısıyla beslemiyoruz (autoregressive drift riski) — bunun
+   * yerine geçen haftanın AYNI GÜNÜNÜN gerçek verisini modele girdi olarak
+   * veriyoruz (predictSeries zaten her slotu yalnızca kendinden ÖNCEKİ gerçek
+   * veriyle üretir). Böylece model gerçekten kullanılmış olur, ama girdi hep
+   * gerçek olduğu için hata birikmez. Dün yerine geçen hafta kullanılıyor
+   * çünkü hafta içi/sonu trafiği çok farklı olabiliyor (Pazartesi'yi Pazar'la
+   * kıyaslamak yanıltıcı olur). Referans günün verisi asla değişmediği için
+   * tarihe göre anahtarlanan cache TTL'siz kalıcıdır.
+   */
+  private readonly yesterdayCache = new Map<string, Record<string, number[]>>()
+
+  private extractArmSeries(arms: ArmData[], slotCount: number): Record<string, number[]> {
+    const armSeries: Record<string, number[]> = {}
+    for (const armData of arms) {
+      const direction = String(armData['edge_direction'] ?? '').trim().toUpperCase()
+      if (!direction) continue
+      const series: number[] = []
+      for (let i = 0; i < slotCount; i++) {
+        series.push(Number(armData[String(i)] ?? 0))
+      }
+      armSeries[direction] = series
+    }
+    return armSeries
+  }
+
+  async getYesterdaySeries(region: string, junctionId: number): Promise<Record<string, number[]>> {
+    const config = REGION_CONFIG[region]
+    if (!config) throw new Error(`Bilinmeyen bölge: ${region}`)
+    if (!config.junctionIds.includes(junctionId)) {
+      throw new Error(`Kavşak ${junctionId} '${region}' bölgesinde bulunamadı.`)
+    }
+
+    const ref = new Date()
+    ref.setDate(ref.getDate() - 7)
+    // Yerel tarih bileşenlerinden oluştur — toISOString() UTC'ye çevirir ve
+    // gece yarısına yakın saatlerde (TR: 00:00-02:59) yanlış günü seçebilir.
+    const dateStr = `${ref.getFullYear()}-${String(ref.getMonth() + 1).padStart(2, '0')}-${String(ref.getDate()).padStart(2, '0')}`
+    const cacheKey = `${region}:${junctionId}:${dateStr}`
+
+    const cached = this.yesterdayCache.get(cacheKey)
+    if (cached) return cached
+
+    const client = this.clientFor(config.city)
+    const slotMinutes = client.getSlotMinutes()
+    const slotCount = (24 * 60) / slotMinutes
+
+    const dataByJunction = await client.fetchRegionForDate(region, dateStr)
+
+    let armSeries: Record<string, number[]> = {}
+    if (config.useModel) {
+      const seriesResult = await this.pythonModel.predictSeries(region, dataByJunction, slotCount - 1)
+      if (seriesResult) {
+        armSeries = seriesResult.series[junctionId] ?? {}
+      }
+    }
+    if (Object.keys(armSeries).length === 0) {
+      // Model yoksa/erişilemezse dürüst fallback: geçen haftanın ham verisi.
+      armSeries = this.extractArmSeries(dataByJunction[junctionId] ?? [], slotCount)
+    }
+
+    this.yesterdayCache.set(cacheKey, armSeries)
+    return armSeries
+  }
+
+  /**
+   * Bir kavşağın GÜNÜN TAMAMI için (geçmiş + gelecek) faz önerisi serisi.
+   * Geçmiş/şu ana kadar: bugünün gerçek verisiyle üretilen rolling tahmin.
+   * Gelecek: geçen haftaya dayalı model tahmini (getYesterdaySeries).
+   * Frontend, kullanıcının grafikte seçtiği herhangi bir saat için bu diziden
+   * ilgili slotu okuyup Faz Süre Dağılımı panelini o saate göre gösterebilir.
+   */
+  async getJunctionDayPhases(region: string, junctionId: number): Promise<PhaseSeriesItem[]> {
+    const config = REGION_CONFIG[region]
+    if (!config) throw new Error(`Bilinmeyen bölge: ${region}`)
+    if (!config.junctionIds.includes(junctionId)) {
+      throw new Error(`Kavşak ${junctionId} '${region}' bölgesinde bulunamadı.`)
+    }
+
+    const regionResult = await this.predictRegion(region)
+    const todaySeries = regionResult.prediction_series?.[junctionId] ?? {}
+    const futureSeries = await this.getYesterdaySeries(region, junctionId)
+
+    const client = this.clientFor(config.city)
+    const slotMinutes = client.getSlotMinutes()
+    const slotCount = (24 * 60) / slotMinutes
+
+    const arms = new Set([...Object.keys(todaySeries), ...Object.keys(futureSeries)])
+    const merged: Record<string, number[]> = {}
+    for (const arm of arms) {
+      const todayArr = todaySeries[arm] ?? []
+      const futureArr = futureSeries[arm] ?? []
+      const combined: number[] = []
+      for (let i = 0; i < slotCount; i++) {
+        combined.push(i < todayArr.length ? todayArr[i] : (futureArr[i] ?? 0))
+      }
+      merged[arm] = combined
+    }
+
+    const phaseSeriesResult = this.phaseCalculator.computePhaseSeries(
+      { [junctionId]: merged },
+      region,
+      {},
+      slotMinutes,
+    )
+    return phaseSeriesResult[junctionId] ?? []
+  }
+
   async getCacheStatus(): Promise<object> {
     return this.cache.getStatus()
   }
 
   clearCache(): void {
     this.cache.clearExpired()
+  }
+
+  /** Bir bölgenin cache'lenmiş tahmin sonucunu siler — faz ayarı değiştiğinde çağrılır. */
+  invalidateRegionCache(region: string): void {
+    this.cache.delete(region)
   }
 }

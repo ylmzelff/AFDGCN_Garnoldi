@@ -62,6 +62,76 @@ export const predictJunction = async (req: Request, res: Response): Promise<void
   }
 }
 
+export const getJunctionYesterday = async (req: Request, res: Response): Promise<void> => {
+  const junctionId = Number(req.params['junction_id'])
+  let region = req.query['region'] as string | undefined
+
+  if (!region) {
+    for (const [r, config] of Object.entries(REGION_CONFIG)) {
+      if (config.junctionIds.includes(junctionId)) {
+        region = r
+        break
+      }
+    }
+  }
+
+  if (!region) {
+    res.status(404).json({
+      error: true,
+      code: 'REGION_NOT_FOUND',
+      message: `Kavşak ${junctionId} hiçbir bölgede bulunamadı.`,
+    })
+    return
+  }
+
+  try {
+    const series = await realTimePredictor.getYesterdaySeries(region, junctionId)
+    res.json({ junction_id: junctionId, region, yesterday_series: series })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    if (message.includes('bulunamadı')) {
+      res.status(404).json({ error: true, code: 'REGION_NOT_FOUND', message })
+    } else {
+      res.error(err)
+    }
+  }
+}
+
+export const getJunctionDayPhases = async (req: Request, res: Response): Promise<void> => {
+  const junctionId = Number(req.params['junction_id'])
+  let region = req.query['region'] as string | undefined
+
+  if (!region) {
+    for (const [r, config] of Object.entries(REGION_CONFIG)) {
+      if (config.junctionIds.includes(junctionId)) {
+        region = r
+        break
+      }
+    }
+  }
+
+  if (!region) {
+    res.status(404).json({
+      error: true,
+      code: 'REGION_NOT_FOUND',
+      message: `Kavşak ${junctionId} hiçbir bölgede bulunamadı.`,
+    })
+    return
+  }
+
+  try {
+    const dayPhases = await realTimePredictor.getJunctionDayPhases(region, junctionId)
+    res.json({ junction_id: junctionId, region, day_phases: dayPhases })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    if (message.includes('bulunamadı')) {
+      res.status(404).json({ error: true, code: 'REGION_NOT_FOUND', message })
+    } else {
+      res.error(err)
+    }
+  }
+}
+
 export const getPredictionStatus = async (_req: Request, res: Response): Promise<void> => {
   try {
     const cacheStatus = await realTimePredictor.getCacheStatus()
