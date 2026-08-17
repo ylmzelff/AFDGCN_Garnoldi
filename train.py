@@ -170,7 +170,7 @@ print("train loader ",len(train_loader))
 input_dim = 1
 hidden_dim = 64
 output_dim = 1
-embed_dim = 16
+embed_dim = args.num_nodes  # bu projede embed_dim = num_nodes konvansiyonu kullaniliyor (Ildem=34, Sivas=16, Tuna=27)
 cheb_k = 2
 horizon = 1
 num_layers = 1

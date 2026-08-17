@@ -45,6 +45,9 @@ def load_st_dataset(dataset):
     elif dataset == 'Sivas':
         data_path = os.path.join(_PROJECT_ROOT, 'data', 'Sivas', 'kol_bazli_v2.npz')
         data = np.load(data_path)['data'][:, :, :1]  # only the first dimension, traffic flow data
+    elif dataset == 'Tuna':
+        data_path = os.path.join(_PROJECT_ROOT, 'data', 'Kayseri', 'kol_bazli_tuna.npz')
+        data = np.load(data_path)['data'][:, :, :1]  # only the first dimension, traffic flow data
     else:
         raise ValueError
     print('Load %s Dataset shaped: ' % dataset, data.shape)

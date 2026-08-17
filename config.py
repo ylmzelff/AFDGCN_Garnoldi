@@ -8,12 +8,14 @@ DEBUG = 'True'
 #DATASET = 'PEMS04'
 #DATASET = 'Konya'
 #DATASET = 'Kayseri'
-DATASET = 'Sivas'
+#DATASET = 'Sivas'
+DATASET = 'Tuna'
 DEVICE = 'cuda:0'
 #DEVICE = 'cpu'
 MODEL = 'AFDGCN'
 #GRAPH = "/content/AFDGCN_Garnoldi/data/Kayseri/kayseri_kavsaklar.csv"
-GRAPH = "data/Sivas/directed_sivas.csv"
+#GRAPH = "data/Sivas/directed_sivas.csv"
+GRAPH = "data/Kayseri/directed_tuna.csv"
 #GRAPH = "/content/AFDGCN_Garnoldi/data/Konya/konya_kavşaklar.csv"
 #GRAPH = "/content/AFDGCN_Garnoldi/data/Kcetas/conn_graph.csv"
 #GRAPH = "./data/PEMS04/PEMS04.csv"
@@ -24,7 +26,7 @@ ALGO = ALGO_OPTIONS[1]
 FILENAME_ID = None
 
 # 1. get configuration
-config_file = 'conf/Sivas_AFDGCN.conf'
+config_file = 'conf/Tuna_AFDGCN.conf'
 print(config_file)
 config = configparser.ConfigParser()
 config.read(config_file)
