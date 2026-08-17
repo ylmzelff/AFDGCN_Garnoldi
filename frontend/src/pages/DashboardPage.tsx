@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LogOut, RefreshCw, TrafficCone, Zap, ChevronRight, Activity, Wifi, WifiOff, Brain, BarChart2 } from 'lucide-react';
+import { LogOut, RefreshCw, TrafficCone, ChevronRight, Activity, Wifi, WifiOff, Brain, BarChart2 } from 'lucide-react';
 import { useAuthStore } from '@/store/useAuthStore';
 import { usePhaseStore } from '@/store/usePhaseStore';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { apiClient } from '@/api/client';
 import { junctionName, junctionArms } from '@/config/junctionMeta';
+import { JunctionPhaseInline } from '@/components/JunctionPhaseInline';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer,
@@ -50,6 +51,26 @@ interface PhaseArm {
   cycle_time: number; status: string;
 }
 
+interface DayPhaseSlot {
+  slot_index: number;
+  time_label: string;
+  cycle_time: number;
+  arms: { arm: string; armName: string; vehicleCount: number; green: number; yellow: number; red: number; status: string }[];
+}
+
+function dayPhaseSlotToArms(slot: DayPhaseSlot): PhaseArm[] {
+  return slot.arms.map((a) => ({
+    arm: a.arm,
+    name: a.armName || `Kol ${a.arm}`,
+    vehicle_count: a.vehicleCount,
+    green: a.green,
+    yellow: a.yellow,
+    red: a.red,
+    cycle_time: slot.cycle_time,
+    status: a.status,
+  }));
+}
+
 function loadLevel(total: number): LoadLevel {
   if (total === 0) return null;
   if (total < 40) return 'low';
@@ -81,7 +102,10 @@ export default function DashboardPage() {
   const [phaseData, setPhaseData] = useState<PhaseArm[] | null>(null);
   const [phaseCycle, setPhaseCycle] = useState(60);
   const [phaseLoading, setPhaseLoading] = useState(false);
-  const [phaseView, setPhaseView] = useState<'duration' | 'vehicles'>('duration');
+  const [livePhaseData, setLivePhaseData] = useState<PhaseArm[] | null>(null);
+  const [livePhaseCycle, setLivePhaseCycle] = useState(60);
+  const [dayPhases, setDayPhases] = useState<DayPhaseSlot[] | null>(null);
+  const [viewingLabel, setViewingLabel] = useState<string | null>(null);
   const [regionOpen, setRegionOpen] = useState(true);
   const [junctionOpen, setJunctionOpen] = useState(true);
 
@@ -187,40 +211,72 @@ export default function DashboardPage() {
         return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
       };
 
+      const slotsPerDay = Math.round(1440 / slotMinutes);
+
       if (initial) {
         const series: number[] = data.time_series?.[junctionId]?.[arm] ?? [];
         const predSeries: number[] = data.prediction_series?.[junctionId]?.[arm] ?? [];
         const startSlot: number = data.time_series_start_slot ?? 0;
+
+        // Günün henüz gelmemiş saatleri için AFDGCN tabanlı tam-gün tahmini —
+        // model, geçen haftanın aynı günündeki GERÇEK veriyle beslenerek
+        // üretir (kendi çıktısını kendine besleyip hata biriktirmez).
+        let futureSeries: number[] = [];
+        try {
+          const fRes = await apiClient.get(`/predict/junction/${junctionId}/yesterday?region=${selectedRegion?.name}`);
+          futureSeries = fRes.data?.yesterday_series?.[arm] ?? [];
+        } catch { /* gelecek tahmini yoksa sessizce geç */ }
 
         // Baştaki sıfır (trafik yok) noktaları kırp
         let firstNonZero = 0;
         for (let i = 0; i < series.length; i++) {
           if (series[i] > 0) { firstNonZero = Math.max(0, i - 1); break; }
         }
-        const trimmed = series.slice(firstNonZero);
-        const trimmedPred = predSeries.slice(firstNonZero);
         const trimStart = startSlot + firstNonZero;
 
-        const points: ChartPoint[] = trimmed.map((val, i) => ({
-          time: slotToTime(trimStart + i),
-          real: Math.round(val),
-          predicted: trimmedPred[i] !== undefined ? Math.round(trimmedPred[i]) : null,
-        }));
+        // Günün tamamını çiz: geçmiş slotlarda gerçek + bugünün model tahmini,
+        // henüz gelmemiş slotlarda geçen haftaya dayalı model tahmini — tek
+        // kesintisiz "Tahmin" çizgisi, gerçek veri geldikçe üzerine biner.
+        const points: ChartPoint[] = [];
+        for (let slot = trimStart; slot < slotsPerDay; slot++) {
+          const idx = slot - startSlot;
+          const hasReal = idx >= 0 && idx < series.length;
+          const todayPred = hasReal && predSeries[idx] !== undefined ? Math.round(predSeries[idx]) : null;
+          const futurePred = futureSeries[slot] !== undefined ? Math.round(futureSeries[slot]) : null;
+          points.push({
+            time: slotToTime(slot),
+            real: hasReal ? Math.round(series[idx]) : null,
+            predicted: todayPred !== null ? todayPred : futurePred,
+          });
+        }
         setChartData(points);
       } else {
-        // Bölgenin slot'unda bir yeni nokta ekle — tamamlanan (bir önceki) slotu göster
+        // Bölgenin slot'unda tamamlanan (bir önceki) slotu güncelle — gün boyu
+        // grafiği zaten çizili olduğu için yeni nokta eklemek yerine ilgili
+        // slotun gerçek/tahmin değerini doldurur (gelecek tahmini yerini gerçek veri alır).
         const real = data.raw_data?.[junctionId]?.[arm] ?? null;
         const now = new Date();
         const slotsPerHour = 60 / slotMinutes;
         const curSlot = now.getHours() * slotsPerHour + Math.floor(now.getMinutes() / slotMinutes);
         const completedSlot = Math.max(0, curSlot - 1); // backend ile aynı mantık
+        const timeLabel = slotToTime(completedSlot);
         setChartData(prev => {
-          const point: ChartPoint = {
-            time: slotToTime(completedSlot),
-            real: real !== null ? Math.round(real) : null,
-            predicted: predicted !== null ? Math.round(predicted) : null,
+          const idx = prev.findIndex((p) => p.time === timeLabel);
+          if (idx === -1) {
+            const point: ChartPoint = {
+              time: timeLabel,
+              real: real !== null ? Math.round(real) : null,
+              predicted: predicted !== null ? Math.round(predicted) : null,
+            };
+            return [...prev, point].slice(-slotsPerDay);
+          }
+          const updated = [...prev];
+          updated[idx] = {
+            ...updated[idx],
+            real: real !== null ? Math.round(real) : updated[idx].real,
+            predicted: predicted !== null ? Math.round(predicted) : updated[idx].predicted,
           };
-          return [...prev, point].slice(-(1440 / slotMinutes)); // max 1 gün
+          return updated;
         });
       }
     } catch { /* sunucu hatası sessizce geç */ }
@@ -244,13 +300,13 @@ export default function DashboardPage() {
     if (!selectedJunction) return;
     setPhaseLoading(true);
     setPhaseData(null);
+    setViewingLabel(null);
     try {
       const res = await apiClient.post(`/predict/junction/${selectedJunction.id}?region=${selectedRegion?.name}`);
       const detail = res.data;
       // Backend yanıtı: detail.phases = { _cycle_time, _total_vehicles, A: {...}, B: {...}, ... }
       const phases: Record<string, any> = detail.phases ?? {};
       const cycleTime: number = (phases['_cycle_time'] as number) ?? 60;
-      setPhaseCycle(cycleTime);
       const arms: PhaseArm[] = Object.entries(phases)
         .filter(([k, v]) => !k.startsWith('_') && v !== null && typeof v === 'object')
         .map(([arm, d]) => ({
@@ -263,9 +319,38 @@ export default function DashboardPage() {
           cycle_time: cycleTime,
           status: d.status ?? 'low',
         }));
+      setPhaseCycle(cycleTime);
       setPhaseData(arms);
+      setLivePhaseCycle(cycleTime);
+      setLivePhaseData(arms);
+      // Grafik + faz paneli tek tıkla birlikte görünsün — ikinci bir kol
+      // seçimi gerekmeden Faz A'dan (ilk koldan) başlayarak otomatik açılır.
+      if (arms[0]) setSelectedArm(arms[0].arm);
     } catch { /* hata sessizce geç */ }
     finally { setPhaseLoading(false); }
+
+    // Günün tamamı için faz serisi — grafikte bir saate tıklanınca kullanılır.
+    // Ayrı try/catch: bu isteğin başarısız olması "şu an" görünümünü etkilemesin.
+    try {
+      const dayRes = await apiClient.get(`/predict/junction/${selectedJunction.id}/day-phases?region=${selectedRegion?.name}`);
+      setDayPhases(dayRes.data?.day_phases ?? null);
+    } catch {
+      setDayPhases(null);
+    }
+  }
+
+  function handleSelectTimeSlot(timeLabel: string) {
+    const slot = dayPhases?.find((s) => s.time_label === timeLabel);
+    if (!slot) return;
+    setPhaseData(dayPhaseSlotToArms(slot));
+    setPhaseCycle(slot.cycle_time);
+    setViewingLabel(timeLabel);
+  }
+
+  function handleBackToNow() {
+    setPhaseData(livePhaseData);
+    setPhaseCycle(livePhaseCycle);
+    setViewingLabel(null);
   }
 
   function handleCitySelect(city: string) {
@@ -454,7 +539,6 @@ export default function DashboardPage() {
               <div className="mt-2 flex flex-wrap gap-2">
                 {(selectedRegion?.junctions ?? []).map((j) => {
                   const sel = selectedJunction?.id === j.id;
-                  const live = liveData[j.id];
                   return (
                     <button
                       key={j.id}
@@ -466,11 +550,6 @@ export default function DashboardPage() {
                     >
                       <TrafficCone className={`h-3.5 w-3.5 flex-shrink-0 ${sel ? 'text-white/70' : 'text-brand'}`} />
                       <span>{j.name}</span>
-                      {!liveLoading && live && (
-                        <span className={`text-[11px] font-normal ${sel ? 'text-white/60' : 'text-gray-400'}`}>
-                          {live.totalVehicles} araç
-                        </span>
-                      )}
                     </button>
                   );
                 })}
@@ -499,20 +578,85 @@ export default function DashboardPage() {
           )}
         </section>
 
-        {/* ── Adım 2: Faz Önerisi ─────────────────────────────────────── */}
-        {selectedJunction && (
-          <section className="animate-fade-in">
-            <div className="flex items-center gap-4 flex-wrap">
+        {/* ── Adım 2: Faz Ayarları (doğrudan görünür, kavşak seçilince) ── */}
+        {selectedJunction && selectedRegion && (
+          <JunctionPhaseInline
+            key={selectedJunction.id}
+            region={selectedRegion.name}
+            city={selectedRegion.city}
+            junctionId={selectedJunction.id}
+            onSaved={handleGetPhase}
+          />
+        )}
+
+        {/* ── Adım 3: Grafik ──────────────────────────────────────────── */}
+        {selectedJunction && selectedArm && (
+          <section className="animate-fade-in space-y-4">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <h2 className="text-base font-bold text-gray-800">
+                  {selectedJunction.name} — Faz {selectedArm} — Araç Akışı
+                </h2>
+                <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
+                  {source && <><Activity className="h-3 w-3" />{source === 'AFDGCN' ? 'Garnoldi' : source} · </>}
+                  10dk yenileme · bir saate tıklayınca o saat için faz önerisi aşağıda gösterilir
+                </p>
+              </div>
               <button
-                onClick={handleGetPhase}
-                disabled={phaseLoading}
-                className="flex items-center gap-2 rounded-xl bg-brand px-6 py-3 text-white font-semibold shadow-md hover:bg-brand/90 disabled:opacity-60 transition"
+                onClick={() => fetchPoint(selectedJunction.id, selectedArm, true)}
+                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-gray-600 border border-gray-200 bg-white hover:bg-gray-50 transition"
               >
-                <Zap className="h-5 w-5" />
-                {phaseLoading ? 'Hesaplanıyor…' : `${selectedJunction.name} için Faz Önerisi Al`}
+                <RefreshCw className="h-4 w-4" />Yenile
               </button>
             </div>
 
+            <div className="rounded-2xl bg-white border border-gray-100 shadow-sm p-5">
+              {chartData.length === 0 ? (
+                <div className="flex h-52 items-center justify-center text-gray-400 text-sm gap-2">
+                  <RefreshCw className="h-4 w-4 animate-spin" /> Veri yükleniyor…
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart
+                    data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}
+                    onClick={(e) => { if (e?.activeLabel) handleSelectTimeSlot(String(e.activeLabel)); }}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                    <XAxis dataKey="time" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+                    <YAxis tick={{ fontSize: 11 }} unit=" araç" width={60} />
+                    <Tooltip
+                      contentStyle={{ borderRadius: 10, border: '1px solid #e0e7ff', fontSize: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
+                      formatter={(v: number, name: string) => [`${v} araç`, name]}
+                      labelStyle={{ fontWeight: 600, color: '#374151' }}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                    <Line
+                      type="monotone" dataKey="real" name="Gerçek"
+                      stroke="#2563eb" strokeWidth={2.5} dot={false} activeDot={{ r: 5, fill: '#2563eb' }} connectNulls
+                    />
+                    <Line
+                      type="monotone" dataKey="predicted" name="Garnoldi Tahmini"
+                      stroke="#f59e0b" strokeWidth={2.5} strokeDasharray="6 3"
+                      dot={false} activeDot={{ r: 5, fill: '#f59e0b' }} connectNulls
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </section>
+        )}
+
+
+
+        {/* ── Adım 4: Faz Önerisi ─────────────────────────────────────── */}
+        {selectedJunction && (
+          <section className="animate-fade-in">
+            {phaseLoading && !phaseData && (
+              <p className="text-sm text-gray-400 flex items-center gap-2">
+                <RefreshCw className="h-4 w-4 animate-spin" />Faz önerisi hesaplanıyor…
+              </p>
+            )}
             {phaseData && (
               <div className="mt-4 rounded-2xl border border-gray-100 bg-white shadow-sm overflow-hidden">
 
@@ -524,19 +668,20 @@ export default function DashboardPage() {
                       <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${source === 'AFDGCN' ? 'bg-indigo-100 text-indigo-700' : 'bg-purple-100 text-purple-700'
                         }`}>{source === 'AFDGCN' ? 'Garnoldi' : source}</span>
                     )}
+                    {viewingLabel && (
+                      <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-amber-100 text-amber-700">
+                        {viewingLabel} için gösteriliyor
+                      </span>
+                    )}
                   </div>
-                  <div className="flex rounded-lg overflow-hidden border border-gray-200 text-xs">
+                  {viewingLabel && (
                     <button
-                      onClick={() => setPhaseView('duration')}
-                      className={`px-3 py-1.5 font-medium transition ${phaseView === 'duration' ? 'bg-brand text-white' : 'text-gray-500 hover:bg-gray-100'
-                        }`}
-                    >Faz Süre Dağılımı</button>
-                    <button
-                      onClick={() => setPhaseView('vehicles')}
-                      className={`px-3 py-1.5 font-medium border-l border-gray-200 transition ${phaseView === 'vehicles' ? 'bg-brand text-white' : 'text-gray-500 hover:bg-gray-100'
-                        }`}
-                    >Araç Sayısı Dağılımı</button>
-                  </div>
+                      onClick={handleBackToNow}
+                      className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-brand border border-brand/30 bg-brand/5 hover:bg-brand/10 transition"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />Şu ana dön
+                    </button>
+                  )}
                 </div>
 
                 {/* ── Body ── */}
@@ -546,13 +691,13 @@ export default function DashboardPage() {
                   <div className="flex-1 p-5">
 
                     {/* Cycle stacked bar */}
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Döngü Zaman Çizelgesi ({phaseCycle}s)</p>
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Döngü Zaman Çizelgesi</p>
                     <div className="flex h-9 rounded-lg overflow-hidden mb-5 ring-1 ring-black/5">
                       {phaseData.map((arm, i) => (
                         <Fragment key={arm.arm}>
                           <div
                             style={{ flex: arm.green, background: ARM_PHASE_COLORS[i % ARM_PHASE_COLORS.length] }}
-                            title={`Kol ${arm.arm} Yeşil: ${arm.green}s`}
+                            title={`Kol ${arm.arm} Yeşil: ${arm.green}`}
                             className="relative flex items-center justify-center"
                           >
                             {arm.green >= 10 && (
@@ -561,11 +706,11 @@ export default function DashboardPage() {
                           </div>
                           <div
                             style={{ flex: arm.yellow, background: '#eab308' }}
-                            title={`Kol ${arm.arm} Sarı: ${arm.yellow}s`}
+                            title={`Kol ${arm.arm} Sarı: ${arm.yellow}`}
                           />
                           <div
                             style={{ flex: 6, background: '#334155' }}
-                            title="Koruma: 6s"
+                            title="Koruma: 6"
                           />
                         </Fragment>
                       ))}
@@ -577,13 +722,8 @@ export default function DashboardPage() {
                       {phaseData.map((arm, i) => {
                         const color = ARM_PHASE_COLORS[i % ARM_PHASE_COLORS.length];
                         const maxGreen = Math.max(...phaseData.map((a) => a.green), 1);
-                        const maxVeh = Math.max(...phaseData.map((a) => a.vehicle_count), 1);
-                        const barPct = phaseView === 'duration'
-                          ? (arm.green / maxGreen) * 100
-                          : (arm.vehicle_count / maxVeh) * 100;
-                        const label = phaseView === 'duration'
-                          ? `${arm.green}s`
-                          : `${Math.round(arm.vehicle_count)} araç`;
+                        const barPct = (arm.green / maxGreen) * 100;
+                        const label = `${arm.green}`;
                         const isActive = selectedArm === arm.arm;
                         return (
                           <button
@@ -603,7 +743,7 @@ export default function DashboardPage() {
                               />
                             </div>
                             <span className="text-xs text-gray-600 font-mono w-20 text-right flex-shrink-0">{label}</span>
-                            {isActive && <span className="text-[10px] font-bold flex-shrink-0" style={{ color }}>Grafik ↓</span>}
+                            {isActive && <span className="text-[10px] font-bold flex-shrink-0" style={{ color }}>Grafik ↑</span>}
                           </button>
                         );
                       })}
@@ -640,7 +780,6 @@ export default function DashboardPage() {
 
                     {/* Color legend */}
                     <div className="flex gap-4 mt-3">
-                      <span className="flex items-center gap-1.5 text-xs text-gray-400"><span className="h-2 w-5 rounded-sm bg-green-500" />Yeşil</span>
                       <span className="flex items-center gap-1.5 text-xs text-gray-400"><span className="h-2 w-5 rounded-sm bg-yellow-400" />Sarı</span>
                       <span className="flex items-center gap-1.5 text-xs text-gray-400"><span className="h-2 w-5 rounded-sm" style={{ background: '#334155' }} />Koruma</span>
                     </div>
@@ -651,33 +790,29 @@ export default function DashboardPage() {
                   {/* Right — Pie chart + legend */}
                   <div className="w-full lg:w-72 p-5 flex flex-col items-center border-t lg:border-t-0 border-gray-100">
                     <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1 self-start">
-                      {phaseView === 'duration' ? 'Faz Süre Dağılımı' : 'Araç Sayısı Dağılımı'}
+                      Faz Süre Dağılımı
                     </p>
                     <ResponsiveContainer width="100%" height={220}>
                       <PieChart>
                         <Pie
                           data={phaseData.map((arm, i) => ({
                             name: `Faz ${arm.arm}`,
-                            value: phaseView === 'duration' ? arm.green : Math.round(arm.vehicle_count),
+                            value: arm.green,
                             fill: ARM_PHASE_COLORS[i % ARM_PHASE_COLORS.length],
                           }))}
                           cx="50%"
                           cy="50%"
                           innerRadius={52}
-                          outerRadius={90}
+                          outerRadius={80}
                           paddingAngle={2}
                           dataKey="value"
-                          label={({ name, value }: any) =>
-                            `${name} ${value}${phaseView === 'duration' ? 's' : ''}`
-                          }
-                          labelLine
                         >
                           {phaseData.map((_, i) => (
                             <Cell key={i} fill={ARM_PHASE_COLORS[i % ARM_PHASE_COLORS.length]} />
                           ))}
                         </Pie>
                         <Tooltip
-                          formatter={(v: number) => [phaseView === 'duration' ? `${v}s` : `${v} araç`]}
+                          formatter={(v: number) => [`${v}`]}
                           contentStyle={{ fontSize: 11, borderRadius: 8 }}
                         />
                       </PieChart>
@@ -685,84 +820,20 @@ export default function DashboardPage() {
 
                     {/* Legend rows */}
                     <div className="space-y-2 w-full mt-1">
-                      {phaseData.map((arm, i) => {
-                        const total = phaseData.reduce((s, a) =>
-                          s + (phaseView === 'duration' ? a.green : a.vehicle_count), 0);
-                        const val = phaseView === 'duration' ? arm.green : arm.vehicle_count;
-                        const pct = total > 0 ? Math.round((val / total) * 100) : 0;
-                        return (
-                          <div key={arm.arm} className="flex items-center gap-2 text-xs">
-                            <div className="h-3 w-3 rounded-full flex-shrink-0" style={{ background: ARM_PHASE_COLORS[i % ARM_PHASE_COLORS.length] }} />
-                            <span className="font-bold text-gray-700 w-10">Faz {arm.arm}</span>
-                            <span className="text-gray-400 flex-1 truncate text-[11px]" title={arm.name}>{arm.name}</span>
-                            <span className="font-bold text-gray-800 tabular-nums">
-                              {phaseView === 'duration' ? `${arm.green}s` : Math.round(arm.vehicle_count)}
-                            </span>
-                          </div>
-                        );
-                      })}
+                      {phaseData.map((arm, i) => (
+                        <div key={arm.arm} className="flex items-center gap-2 text-xs">
+                          <div className="h-3 w-3 rounded-full flex-shrink-0" style={{ background: ARM_PHASE_COLORS[i % ARM_PHASE_COLORS.length] }} />
+                          <span className="font-bold text-gray-700 w-10">Faz {arm.arm}</span>
+                          <span className="text-gray-400 flex-1 truncate text-[11px]" title={arm.name}>{arm.name}</span>
+                          <span className="font-bold text-gray-800 tabular-nums">{arm.green}</span>
+                        </div>
+                      ))}
                     </div>
                   </div>
 
                 </div>
               </div>
             )}
-          </section>
-        )}
-
-
-
-        {/* ── Adım 4: Grafik ──────────────────────────────────────────── */}
-        {selectedJunction && selectedArm && (
-          <section className="animate-fade-in space-y-4">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div>
-                <h2 className="text-base font-bold text-gray-800">
-                  {selectedJunction.name} — Faz {selectedArm} — Araç Akışı
-                </h2>
-                <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
-                  {source && <><Activity className="h-3 w-3" />{source === 'AFDGCN' ? 'Garnoldi' : source} · </>}
-                  10dk yenileme
-                </p>
-              </div>
-              <button
-                onClick={() => fetchPoint(selectedJunction.id, selectedArm, true)}
-                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-gray-600 border border-gray-200 bg-white hover:bg-gray-50 transition"
-              >
-                <RefreshCw className="h-4 w-4" />Yenile
-              </button>
-            </div>
-
-            <div className="rounded-2xl bg-white border border-gray-100 shadow-sm p-5">
-              {chartData.length === 0 ? (
-                <div className="flex h-52 items-center justify-center text-gray-400 text-sm gap-2">
-                  <RefreshCw className="h-4 w-4 animate-spin" /> Veri yükleniyor…
-                </div>
-              ) : (
-                <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                    <XAxis dataKey="time" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
-                    <YAxis tick={{ fontSize: 11 }} unit=" araç" width={60} />
-                    <Tooltip
-                      contentStyle={{ borderRadius: 10, border: '1px solid #e0e7ff', fontSize: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
-                      formatter={(v: number, name: string) => [`${v} araç`, name]}
-                      labelStyle={{ fontWeight: 600, color: '#374151' }}
-                    />
-                    <Legend wrapperStyle={{ fontSize: 12 }} />
-                    <Line
-                      type="monotone" dataKey="real" name="Gerçek"
-                      stroke="#2563eb" strokeWidth={2.5} dot={false} activeDot={{ r: 5, fill: '#2563eb' }} connectNulls
-                    />
-                    <Line
-                      type="monotone" dataKey="predicted" name="Garnoldi Tahmini"
-                      stroke="#f59e0b" strokeWidth={2.5} strokeDasharray="6 3"
-                      dot={false} activeDot={{ r: 5, fill: '#f59e0b' }} connectNulls
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              )}
-            </div>
           </section>
         )}
 
